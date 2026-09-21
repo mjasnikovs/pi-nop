@@ -12,7 +12,8 @@ import {Type} from 'typebox'
 
 enum SubagentErrors {
     EmptyOutput = 'Empty model output',
-    Aborted = 'Subagent aborted'
+    Aborted = 'Subagent aborted',
+    RunFailed = 'Subagent run failed: '
 }
 
 enum SubagentTools {
@@ -73,20 +74,30 @@ const runSubagent = async (
         model: options.model
     })
 
-    const onAbort = () => void session.abort()
+    const onAbort = () => {
+        void session.abort()
+    }
     signal?.addEventListener('abort', onAbort, {once: true})
 
     try {
-        await session.prompt(task)
+        if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
+
+        await session.prompt(task, {expandPromptTemplates: false})
 
         if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
         const last = session.messages.findLast(message => message.role === 'assistant')
-        const text = last?.content.findLast(content => content.type === 'text')?.text
 
-        if (last === undefined || text === undefined) throw new Error(SubagentErrors.EmptyOutput)
+        if (last === undefined) throw new Error(SubagentErrors.EmptyOutput)
 
-        const {model, provider, stopReason} = last
+        const {model, provider, stopReason, errorMessage} = last
+
+        if (stopReason === 'error' || stopReason === 'aborted')
+            throw new Error(SubagentErrors.RunFailed + (errorMessage ?? stopReason))
+
+        const text = session.getLastAssistantText()
+
+        if (text === undefined) throw new Error(SubagentErrors.EmptyOutput)
 
         return {
             text,
@@ -102,9 +113,26 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: 'subagent',
         label: 'Subagent',
-        description: 'execute subagent task',
+        description:
+            'Dispatch an isolated read-only subagent to investigate and return its CONCLUSION — '
+            + 'not the raw evidence. USE THIS FIRST, instead of running your own '
+            + 'ls/grep/find/read, whenever a question spans MULTIPLE files or means '
+            + 'searching/scanning code you have not already located. Doing it yourself '
+            + 'floods your context with raw file output; the subagent reads in isolation '
+            + 'and returns only the answer. You can dispatch several in one turn for '
+            + 'independent questions.\n'
+            + '\n'
+            + 'Good fits:\n'
+            + '- "Where/how is X handled in this repo?" across unfamiliar code\n'
+            + '- Audits and pattern scans across many files ("every place we log PII")\n'
+            + '- Tracing a flow across layers (router → service → database)\n'
+            + '- Summarising long test output, logs, or shell output you do not need verbatim\n'
+            + '\n'
+            + 'Skip when:\n'
+            + '- You already know the exact file — call `read` directly\n'
+            + '- The task needs writes/edits (subagent is read-only)',
         parameters: Type.Object({
-            task: Type.String({description: 'task description'})
+            task: Type.String({description: 'Task for the subagent to perform.'})
         }),
         async execute(_toolCallId, params, signal, _onUpdate, ctx) {
             const {text, details} = await runSubagent(params.task, signal, defaultOptions(ctx.cwd))
