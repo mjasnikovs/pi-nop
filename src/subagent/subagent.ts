@@ -44,13 +44,16 @@ type SubagentResult = {
 
 type SubagentProgress = (details: SubagentDetails) => void
 
+const progressThrottleMs = 100
+
 const lastAssistant = (session: AgentSession): AssistantMessage | undefined =>
     session.messages.findLast(message => message.role === 'assistant')
 
 const buildDetails = (
     session: AgentSession,
     task: string,
-    last: AssistantMessage
+    last: AssistantMessage,
+    lastAssistantText: string
 ): SubagentDetails => ({
     ...session.getSessionStats(),
     model: last.model,
@@ -58,7 +61,7 @@ const buildDetails = (
     stopReason: last.stopReason,
     timestamp: last.timestamp,
     task,
-    lastAssistantText: session.getLastAssistantText() ?? ''
+    lastAssistantText
 })
 
 const defaultOptions = (cwd: string): SubagentOptions => ({
@@ -103,10 +106,21 @@ const runSubagent = async (
     }
     signal?.addEventListener('abort', onAbort, {once: true})
 
+    let progressedAt = 0
+
     const unsubscribe = session.subscribe(event => {
         if (event.type !== 'message_end') return
+
+        const now = Date.now()
+
+        if (now - progressedAt < progressThrottleMs) return
+
         const last = lastAssistant(session)
-        if (last !== undefined) onProgress(buildDetails(session, task, last))
+
+        if (last === undefined) return
+
+        progressedAt = now
+        onProgress(buildDetails(session, task, last, session.getLastAssistantText() ?? ''))
     })
 
     try {
@@ -129,7 +143,7 @@ const runSubagent = async (
 
         if (text === undefined) throw new Error(SubagentErrors.EmptyOutput)
 
-        return {text, details: buildDetails(session, task, last)}
+        return {text, details: buildDetails(session, task, last, text)}
     } finally {
         signal?.removeEventListener('abort', onAbort)
         unsubscribe()
@@ -182,5 +196,5 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {runSubagent}
+export {progressThrottleMs, runSubagent}
 export type {SubagentDetails, SubagentProgress}

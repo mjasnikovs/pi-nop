@@ -98,13 +98,23 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({
     SettingsManager: {create: settingsCreate}
 }))
 
+const realNow = Date.now
+let clock = 1_000
+
 afterAll(() => {
+    Date.now = realNow
     mock.restore()
 })
 
-const {runSubagent, default: register} = await import('../../src/subagent/subagent')
+const {
+    progressThrottleMs,
+    runSubagent,
+    default: register
+} = await import('../../src/subagent/subagent')
 
 beforeEach(() => {
+    clock = 1_000
+    Date.now = () => clock
     session = makeSession()
     onReload = () => Promise.resolve()
     reload.mockClear()
@@ -212,11 +222,13 @@ describe('runSubagent', () => {
         expect(result.details.stopReason).toBe('stop')
     })
 
-    test('streams details to onProgress on every message end', async () => {
+    test('streams the text as it stood, one snapshot per throttle window', async () => {
         const seen: SubagentDetails[] = []
+        session.text = 'partial'
         session.onPrompt = () => {
             session.emit({type: 'message_end'})
             session.emit({type: 'tool_execution_end'})
+            session.text = 'hello'
             session.emit({type: 'message_end'})
             return Promise.resolve()
         }
@@ -225,10 +237,28 @@ describe('runSubagent', () => {
             seen.push(details)
         })
 
-        expect(seen).toHaveLength(2)
-        expect(seen[0]).toEqual(expectedDetails)
+        expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}])
         expect(result.details).toEqual(expectedDetails)
         expect(session.unsubscribe).toHaveBeenCalledTimes(1)
+    })
+
+    test('streams again once the throttle window passes', async () => {
+        const seen: SubagentDetails[] = []
+        session.text = 'first'
+        session.onPrompt = () => {
+            session.emit({type: 'message_end'})
+            session.emit({type: 'message_end'})
+            clock += progressThrottleMs
+            session.text = 'second'
+            session.emit({type: 'message_end'})
+            return Promise.resolve()
+        }
+
+        await runSubagent('task', undefined, details => {
+            seen.push(details)
+        })
+
+        expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
     })
 
     test('holds progress back until an assistant message exists', async () => {
