@@ -2,8 +2,12 @@ import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
 import type {ExtensionAPI, SessionStats, ToolDefinition} from '@earendil-works/pi-coding-agent'
 import type {AssistantMessage, StopReason} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
+import type {SubagentDetails, SubagentProgress} from '../../src/subagent/subagent'
 
-type FakeMessage = Pick<AssistantMessage, 'role' | 'model' | 'provider' | 'stopReason'> & {
+type FakeMessage = Pick<
+    AssistantMessage,
+    'role' | 'model' | 'provider' | 'stopReason' | 'timestamp'
+> & {
     errorMessage?: string
 }
 
@@ -16,6 +20,9 @@ type FakeSession = {
     dispose: ReturnType<typeof mock>
     getLastAssistantText: ReturnType<typeof mock>
     getSessionStats: ReturnType<typeof mock>
+    subscribe: ReturnType<typeof mock>
+    unsubscribe: ReturnType<typeof mock>
+    emit: (event: {type: string}) => void
 }
 
 type SubagentTool = ToolDefinition<TObject<{task: TString}>>
@@ -37,10 +44,13 @@ const assistant = (overrides: Partial<FakeMessage> = {}): FakeMessage => ({
     model: 'fake-model',
     provider: 'fake-provider',
     stopReason: 'stop',
+    timestamp: 1700000000000,
     ...overrides
 })
 
 const makeSession = (): FakeSession => {
+    const listeners: Array<(event: {type: string}) => void> = []
+    const unsubscribe = mock(() => undefined)
     const session: FakeSession = {
         messages: [{role: 'user'}, assistant()],
         text: 'hello',
@@ -49,10 +59,20 @@ const makeSession = (): FakeSession => {
         abort: mock(() => Promise.resolve()),
         dispose: mock(() => undefined),
         getLastAssistantText: mock(() => session.text),
-        getSessionStats: mock(() => stats)
+        getSessionStats: mock(() => stats),
+        subscribe: mock((listener: (event: {type: string}) => void) => {
+            listeners.push(listener)
+            return unsubscribe
+        }),
+        unsubscribe,
+        emit: event => {
+            for (const listener of listeners) listener(event)
+        }
     }
     return session
 }
+
+const noProgress: SubagentProgress = () => undefined
 
 let session = makeSession()
 let onReload: () => Promise<void> = () => Promise.resolve()
@@ -99,12 +119,15 @@ const expectedDetails = {
     ...stats,
     model: 'fake-model',
     provider: 'fake-provider',
-    stopReason: 'stop' as const
+    stopReason: 'stop' as const,
+    timestamp: 1700000000000,
+    task: 'task',
+    lastAssistantText: 'hello'
 }
 
 describe('runSubagent', () => {
     test('returns text and details on a clean stop', async () => {
-        const result = await runSubagent('task', undefined)
+        const result = await runSubagent('task', undefined, noProgress)
 
         expect(result).toEqual({text: 'hello', details: expectedDetails})
         expect(session.prompt).toHaveBeenCalledTimes(1)
@@ -114,7 +137,7 @@ describe('runSubagent', () => {
     })
 
     test('builds an isolated in-memory session from the options', async () => {
-        await runSubagent('task', undefined, {
+        await runSubagent('task', undefined, noProgress, {
             cwd: '/opt/cwd',
             prompt: 'system prompt',
             tools: [],
@@ -149,10 +172,10 @@ describe('runSubagent', () => {
 
     test('forwards an explicit model', async () => {
         const model = {id: 'fake'} as unknown as NonNullable<
-            Parameters<typeof runSubagent>[2]
+            Parameters<typeof runSubagent>[3]
         >['model']
 
-        await runSubagent('task', undefined, {
+        await runSubagent('task', undefined, noProgress, {
             cwd: '/opt/cwd',
             prompt: '',
             tools: [],
@@ -164,7 +187,7 @@ describe('runSubagent', () => {
     })
 
     test('uses read-only tools and the process cwd by default', async () => {
-        await runSubagent('task', undefined)
+        await runSubagent('task', undefined, noProgress)
 
         expect(createAgentSession).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -183,17 +206,54 @@ describe('runSubagent', () => {
             assistant({model: 'second'})
         ]
 
-        const result = await runSubagent('task', undefined)
+        const result = await runSubagent('task', undefined, noProgress)
 
         expect(result.details.model).toBe('second')
         expect(result.details.stopReason).toBe('stop')
+    })
+
+    test('streams details to onProgress on every message end', async () => {
+        const seen: SubagentDetails[] = []
+        session.onPrompt = () => {
+            session.emit({type: 'message_end'})
+            session.emit({type: 'tool_execution_end'})
+            session.emit({type: 'message_end'})
+            return Promise.resolve()
+        }
+
+        const result = await runSubagent('task', undefined, details => {
+            seen.push(details)
+        })
+
+        expect(seen).toHaveLength(2)
+        expect(seen[0]).toEqual(expectedDetails)
+        expect(result.details).toEqual(expectedDetails)
+        expect(session.unsubscribe).toHaveBeenCalledTimes(1)
+    })
+
+    test('holds progress back until an assistant message exists', async () => {
+        const seen: SubagentDetails[] = []
+        session.messages = [{role: 'user'}]
+        session.onPrompt = () => {
+            session.emit({type: 'message_end'})
+            session.messages = [{role: 'user'}, assistant()]
+            return Promise.resolve()
+        }
+
+        await runSubagent('task', undefined, details => {
+            seen.push(details)
+        })
+
+        expect(seen).toHaveLength(0)
     })
 
     test('throws before creating a session when the signal is already aborted', async () => {
         const controller = new AbortController()
         controller.abort()
 
-        await expect(runSubagent('task', controller.signal)).rejects.toThrow('Subagent aborted')
+        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
+            'Subagent aborted'
+        )
         expect(loaderOptions).not.toHaveBeenCalled()
         expect(createAgentSession).not.toHaveBeenCalled()
     })
@@ -205,7 +265,9 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await expect(runSubagent('task', controller.signal)).rejects.toThrow('Subagent aborted')
+        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
+            'Subagent aborted'
+        )
         expect(session.prompt).not.toHaveBeenCalled()
         expect(session.abort).not.toHaveBeenCalled()
         expect(session.dispose).toHaveBeenCalledTimes(1)
@@ -218,7 +280,9 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await expect(runSubagent('task', controller.signal)).rejects.toThrow('Subagent aborted')
+        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
+            'Subagent aborted'
+        )
         expect(session.abort).toHaveBeenCalledTimes(1)
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
@@ -226,7 +290,7 @@ describe('runSubagent', () => {
     test('removes the abort listener after a successful run', async () => {
         const controller = new AbortController()
 
-        await runSubagent('task', controller.signal)
+        await runSubagent('task', controller.signal, noProgress)
         controller.abort()
 
         expect(session.abort).not.toHaveBeenCalled()
@@ -236,7 +300,9 @@ describe('runSubagent', () => {
         const controller = new AbortController()
         session.onPrompt = () => Promise.reject(new Error('network down'))
 
-        await expect(runSubagent('task', controller.signal)).rejects.toThrow('network down')
+        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
+            'network down'
+        )
         controller.abort()
 
         expect(session.abort).not.toHaveBeenCalled()
@@ -248,7 +314,7 @@ describe('runSubagent', () => {
         async stopReason => {
             session.messages = [assistant({stopReason})]
 
-            const result = await runSubagent('task', undefined)
+            const result = await runSubagent('task', undefined, noProgress)
 
             expect(result.text).toBe('hello')
             expect(result.details.stopReason).toBe(stopReason)
@@ -258,7 +324,9 @@ describe('runSubagent', () => {
     test('throws when there is no assistant message', async () => {
         session.messages = [{role: 'user'}]
 
-        await expect(runSubagent('task', undefined)).rejects.toThrow('Empty model output')
+        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+            'Empty model output'
+        )
         expect(session.getLastAssistantText).not.toHaveBeenCalled()
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
@@ -266,20 +334,26 @@ describe('runSubagent', () => {
     test('throws with the error message when the run errors', async () => {
         session.messages = [assistant({stopReason: 'error', errorMessage: 'boom'})]
 
-        await expect(runSubagent('task', undefined)).rejects.toThrow('Subagent run failed: boom')
+        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+            'Subagent run failed: boom'
+        )
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
 
     test('throws with the stop reason when the run is aborted without a message', async () => {
         session.messages = [assistant({stopReason: 'aborted'})]
 
-        await expect(runSubagent('task', undefined)).rejects.toThrow('Subagent run failed: aborted')
+        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+            'Subagent run failed: aborted'
+        )
     })
 
     test('throws when the assistant text is missing', async () => {
         session.text = undefined
 
-        await expect(runSubagent('task', undefined)).rejects.toThrow('Empty model output')
+        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+            'Empty model output'
+        )
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
 })
@@ -297,6 +371,31 @@ describe('extension', () => {
     }
 
     const ctx = (cwd: string) => ({cwd}) as Parameters<SubagentTool['execute']>[4]
+
+    test('forwards subagent progress to the tool update callback', async () => {
+        const tool = registeredTool()
+        const updates: Array<{text: string; task: string}> = []
+        session.onPrompt = () => {
+            session.emit({type: 'message_end'})
+            return Promise.resolve()
+        }
+
+        await tool.execute(
+            'id',
+            {task: 'find the bug'},
+            undefined,
+            partial => {
+                const [content] = partial.content
+                updates.push({
+                    text: content?.type === 'text' ? content.text : '',
+                    task: (partial.details as SubagentDetails).task
+                })
+            },
+            ctx('/fake/cwd')
+        )
+
+        expect(updates).toEqual([{text: 'hello', task: 'find the bug'}])
+    })
 
     test('registers a read-only subagent tool with a task parameter', () => {
         const tool = registeredTool()
@@ -321,7 +420,10 @@ describe('extension', () => {
             ctx('/fake/cwd')
         )
 
-        expect(result).toEqual({content: [{type: 'text', text: 'hello'}], details: expectedDetails})
+        expect(result).toEqual({
+            content: [{type: 'text', text: 'hello'}],
+            details: {...expectedDetails, task: 'find the bug'}
+        })
         expect(session.prompt).toHaveBeenCalledWith('find the bug', {expandPromptTemplates: false})
         expect(createAgentSession).toHaveBeenCalledWith(
             expect.objectContaining({cwd: '/fake/cwd', tools: ['read', 'grep', 'find', 'ls']})

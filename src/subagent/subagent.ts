@@ -1,4 +1,4 @@
-import type {ExtensionAPI, SessionStats} from '@earendil-works/pi-coding-agent'
+import type {AgentSession, ExtensionAPI, SessionStats} from '@earendil-works/pi-coding-agent'
 import {
     createAgentSession,
     DefaultResourceLoader,
@@ -31,12 +31,35 @@ type SubagentOptions = {
     model?: Model<Api>
 }
 
-type SubagentDetails = SessionStats & Pick<AssistantMessage, 'model' | 'provider' | 'stopReason'>
+type SubagentDetails = SessionStats
+    & Pick<AssistantMessage, 'model' | 'provider' | 'stopReason' | 'timestamp'> & {
+        task: string
+        lastAssistantText: string
+    }
 
 type SubagentResult = {
     text: string
     details: SubagentDetails
 }
+
+type SubagentProgress = (details: SubagentDetails) => void
+
+const lastAssistant = (session: AgentSession): AssistantMessage | undefined =>
+    session.messages.findLast(message => message.role === 'assistant')
+
+const buildDetails = (
+    session: AgentSession,
+    task: string,
+    last: AssistantMessage
+): SubagentDetails => ({
+    ...session.getSessionStats(),
+    model: last.model,
+    provider: last.provider,
+    stopReason: last.stopReason,
+    timestamp: last.timestamp,
+    task,
+    lastAssistantText: session.getLastAssistantText() ?? ''
+})
 
 const defaultOptions = (cwd: string): SubagentOptions => ({
     cwd,
@@ -48,6 +71,7 @@ const defaultOptions = (cwd: string): SubagentOptions => ({
 const runSubagent = async (
     task: string,
     signal: AbortSignal | undefined,
+    onProgress: SubagentProgress,
     options: SubagentOptions = defaultOptions(process.cwd())
 ): Promise<SubagentResult> => {
     if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
@@ -79,6 +103,12 @@ const runSubagent = async (
     }
     signal?.addEventListener('abort', onAbort, {once: true})
 
+    const unsubscribe = session.subscribe(event => {
+        if (event.type !== 'message_end') return
+        const last = lastAssistant(session)
+        if (last !== undefined) onProgress(buildDetails(session, task, last))
+    })
+
     try {
         if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
@@ -86,11 +116,11 @@ const runSubagent = async (
 
         if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
-        const last = session.messages.findLast(message => message.role === 'assistant')
+        const last = lastAssistant(session)
 
         if (last === undefined) throw new Error(SubagentErrors.EmptyOutput)
 
-        const {model, provider, stopReason, errorMessage} = last
+        const {stopReason, errorMessage} = last
 
         if (stopReason === 'error' || stopReason === 'aborted')
             throw new Error(SubagentErrors.RunFailed + (errorMessage ?? stopReason))
@@ -99,12 +129,10 @@ const runSubagent = async (
 
         if (text === undefined) throw new Error(SubagentErrors.EmptyOutput)
 
-        return {
-            text,
-            details: {...session.getSessionStats(), model, provider, stopReason}
-        }
+        return {text, details: buildDetails(session, task, last)}
     } finally {
         signal?.removeEventListener('abort', onAbort)
+        unsubscribe()
         session.dispose()
     }
 }
@@ -134,8 +162,18 @@ export default function (pi: ExtensionAPI) {
         parameters: Type.Object({
             task: Type.String({description: 'Task for the subagent to perform.'})
         }),
-        async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-            const {text, details} = await runSubagent(params.task, signal, defaultOptions(ctx.cwd))
+        async execute(_toolCallId, params, signal, onUpdate, ctx) {
+            const {text, details} = await runSubagent(
+                params.task,
+                signal,
+                progress =>
+                    onUpdate?.({
+                        content: [{type: 'text', text: progress.lastAssistantText}],
+                        details: progress
+                    }),
+                defaultOptions(ctx.cwd)
+            )
+
             return {
                 content: [{type: 'text', text}],
                 details
@@ -145,3 +183,4 @@ export default function (pi: ExtensionAPI) {
 }
 
 export {runSubagent}
+export type {SubagentDetails, SubagentProgress}
