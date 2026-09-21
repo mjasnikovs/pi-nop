@@ -10,6 +10,8 @@ import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
+import {renderCall, renderResult} from './subagentTui'
+
 enum SubagentErrors {
     EmptyOutput = 'Empty model output',
     Aborted = 'Subagent aborted',
@@ -35,6 +37,7 @@ type SubagentDetails = SessionStats
     & Pick<AssistantMessage, 'model' | 'provider' | 'stopReason' | 'timestamp'> & {
         task: string
         lastAssistantText: string
+        elapsedMs: number
     }
 
 type SubagentResult = {
@@ -49,19 +52,37 @@ const progressThrottleMs = 100
 const lastAssistant = (session: AgentSession): AssistantMessage | undefined =>
     session.messages.findLast(message => message.role === 'assistant')
 
+// message_end fires before the session appends the message, so fold it in by hand.
+const withPending = (stats: SessionStats, message: AssistantMessage): SessionStats => ({
+    ...stats,
+    assistantMessages: stats.assistantMessages + 1,
+    totalMessages: stats.totalMessages + 1,
+    toolCalls: stats.toolCalls + message.content.filter(block => block.type === 'toolCall').length,
+    tokens: {
+        input: stats.tokens.input + message.usage.input,
+        output: stats.tokens.output + message.usage.output,
+        cacheRead: stats.tokens.cacheRead + message.usage.cacheRead,
+        cacheWrite: stats.tokens.cacheWrite + message.usage.cacheWrite,
+        total: stats.tokens.total + message.usage.totalTokens
+    },
+    cost: stats.cost + message.usage.cost.total
+})
+
 const buildDetails = (
-    session: AgentSession,
+    stats: SessionStats,
     task: string,
     last: AssistantMessage,
-    lastAssistantText: string
+    lastAssistantText: string,
+    startedAt: number
 ): SubagentDetails => ({
-    ...session.getSessionStats(),
+    ...stats,
     model: last.model,
     provider: last.provider,
     stopReason: last.stopReason,
     timestamp: last.timestamp,
     task,
-    lastAssistantText
+    lastAssistantText,
+    elapsedMs: performance.now() - startedAt
 })
 
 const defaultOptions = (cwd: string): SubagentOptions => ({
@@ -77,6 +98,8 @@ const runSubagent = async (
     onProgress: SubagentProgress,
     options: SubagentOptions = defaultOptions(process.cwd())
 ): Promise<SubagentResult> => {
+    const startedAt = performance.now()
+
     if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
     const loader = new DefaultResourceLoader({
@@ -107,20 +130,27 @@ const runSubagent = async (
     signal?.addEventListener('abort', onAbort, {once: true})
 
     let progressedAt = 0
+    let lastText = ''
 
     const unsubscribe = session.subscribe(event => {
-        if (event.type !== 'message_end') return
+        if (event.type !== 'message_end' || event.message.role !== 'assistant') return
 
-        const now = Date.now()
+        lastText = session.getLastAssistantText() ?? lastText
+
+        const now = performance.now()
 
         if (now - progressedAt < progressThrottleMs) return
 
-        const last = lastAssistant(session)
-
-        if (last === undefined) return
-
         progressedAt = now
-        onProgress(buildDetails(session, task, last, session.getLastAssistantText() ?? ''))
+        onProgress(
+            buildDetails(
+                withPending(session.getSessionStats(), event.message),
+                task,
+                event.message,
+                lastText,
+                startedAt
+            )
+        )
     })
 
     try {
@@ -142,8 +172,7 @@ const runSubagent = async (
         const text = session.getLastAssistantText()
 
         if (text === undefined) throw new Error(SubagentErrors.EmptyOutput)
-
-        return {text, details: buildDetails(session, task, last, text)}
+        return {text, details: buildDetails(session.getSessionStats(), task, last, text, startedAt)}
     } finally {
         signal?.removeEventListener('abort', onAbort)
         unsubscribe()
@@ -192,7 +221,9 @@ export default function (pi: ExtensionAPI) {
                 content: [{type: 'text', text}],
                 details
             }
-        }
+        },
+        renderCall,
+        renderResult
     })
 }
 

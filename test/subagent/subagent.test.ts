@@ -6,7 +6,7 @@ import type {SubagentDetails, SubagentProgress} from '../../src/subagent/subagen
 
 type FakeMessage = Pick<
     AssistantMessage,
-    'role' | 'model' | 'provider' | 'stopReason' | 'timestamp'
+    'role' | 'model' | 'provider' | 'stopReason' | 'timestamp' | 'content' | 'usage'
 > & {
     errorMessage?: string
 }
@@ -40,12 +40,23 @@ const stats: SessionStats = {
     cost: 0
 }
 
+const usage: AssistantMessage['usage'] = {
+    input: 4,
+    output: 2,
+    cacheRead: 1,
+    cacheWrite: 0,
+    totalTokens: 7,
+    cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5}
+}
+
 const assistant = (overrides: Partial<FakeMessage> = {}): FakeMessage => ({
     role: 'assistant',
     model: 'fake-model',
     provider: 'fake-provider',
     stopReason: 'stop',
     timestamp: 1700000000000,
+    content: [{type: 'text', text: 'hello'}],
+    usage,
     ...overrides
 })
 
@@ -71,7 +82,6 @@ const makeSession = (): FakeSession => {
         },
         emitAssistant: () => {
             const last = session.messages.findLast(message => message.role === 'assistant')
-
             session.emit({type: 'message_end', message: last})
         }
     }
@@ -90,9 +100,7 @@ const settingsManager = {kind: 'settings'}
 const inMemory = mock((_cwd: string) => sessionManager)
 const settingsCreate = mock((_cwd: string, _agentDir: string) => settingsManager)
 const getAgentDir = mock(() => '/fake/agent')
-
 const actual = await import('@earendil-works/pi-coding-agent')
-
 await mock.module('@earendil-works/pi-coding-agent', () => ({
     ...actual,
     createAgentSession,
@@ -107,11 +115,10 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({
     SettingsManager: {create: settingsCreate}
 }))
 
-const realNow = Date.now
+const realNow = performance.now.bind(performance)
 let clock = 1_000
-
 afterAll(() => {
-    Date.now = realNow
+    performance.now = realNow
     mock.restore()
 })
 
@@ -120,10 +127,9 @@ const {
     runSubagent,
     default: register
 } = await import('../../src/subagent/subagent')
-
 beforeEach(() => {
     clock = 1_000
-    Date.now = () => clock
+    performance.now = () => clock
     session = makeSession()
     onReload = () => Promise.resolve()
     reload.mockClear()
@@ -134,6 +140,15 @@ beforeEach(() => {
     getAgentDir.mockClear()
 })
 
+// Progress snapshots fold in the message that just ended (see withPending).
+const pendingStats: SessionStats = {
+    ...stats,
+    assistantMessages: 2,
+    totalMessages: 3,
+    tokens: {input: 14, output: 7, cacheRead: 1, cacheWrite: 0, total: 22},
+    cost: 0.5
+}
+
 const expectedDetails = {
     ...stats,
     model: 'fake-model',
@@ -142,13 +157,11 @@ const expectedDetails = {
     timestamp: 1700000000000,
     task: 'task',
     lastAssistantText: 'hello',
-    elapsedMs: expect.any(Number)
+    elapsedMs: 0
 }
-
 describe('runSubagent', () => {
     test('returns text and details on a clean stop', async () => {
         const result = await runSubagent('task', undefined, noProgress)
-
         expect(result).toEqual({text: 'hello', details: expectedDetails})
         expect(session.prompt).toHaveBeenCalledTimes(1)
         expect(session.prompt).toHaveBeenCalledWith('task', {expandPromptTemplates: false})
@@ -194,7 +207,6 @@ describe('runSubagent', () => {
         const model = {id: 'fake'} as unknown as NonNullable<
             Parameters<typeof runSubagent>[3]
         >['model']
-
         await runSubagent('task', undefined, noProgress, {
             cwd: '/opt/cwd',
             prompt: '',
@@ -227,7 +239,6 @@ describe('runSubagent', () => {
         ]
 
         const result = await runSubagent('task', undefined, noProgress)
-
         expect(result.details.model).toBe('second')
         expect(result.details.stopReason).toBe('stop')
     })
@@ -235,6 +246,7 @@ describe('runSubagent', () => {
     test('streams the text as it stood, one snapshot per throttle window', async () => {
         const seen: SubagentDetails[] = []
         session.text = 'partial'
+
         session.onPrompt = () => {
             session.emitAssistant()
             session.emit({type: 'tool_execution_end'})
@@ -246,8 +258,7 @@ describe('runSubagent', () => {
         const result = await runSubagent('task', undefined, details => {
             seen.push(details)
         })
-
-        expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}])
+        expect(seen).toEqual([{...expectedDetails, ...pendingStats, lastAssistantText: 'partial'}])
         expect(result.details).toEqual(expectedDetails)
         expect(session.unsubscribe).toHaveBeenCalledTimes(1)
     })
@@ -255,6 +266,7 @@ describe('runSubagent', () => {
     test('streams again once the throttle window passes', async () => {
         const seen: SubagentDetails[] = []
         session.text = 'first'
+
         session.onPrompt = () => {
             session.emitAssistant()
             session.emitAssistant()
@@ -269,6 +281,44 @@ describe('runSubagent', () => {
         })
 
         expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
+    })
+
+    test('counts the tool calls of the message that just ended', async () => {
+        const seen: SubagentDetails[] = []
+        session.messages.push(
+            assistant({content: [{type: 'toolCall', id: '1', name: 'read', arguments: {}}]})
+        )
+
+        session.onPrompt = () => {
+            session.emitAssistant()
+            return Promise.resolve()
+        }
+
+        await runSubagent('task', undefined, details => {
+            seen.push(details)
+        })
+
+        expect(seen.map(details => details.toolCalls)).toEqual([1])
+    })
+
+    test('keeps the last text when a tool-only turn has none', async () => {
+        const seen: SubagentDetails[] = []
+        session.text = 'checking'
+
+        session.onPrompt = () => {
+            session.emitAssistant()
+            clock += progressThrottleMs
+            session.text = undefined
+            session.emitAssistant()
+            session.text = 'hello'
+            return Promise.resolve()
+        }
+
+        await runSubagent('task', undefined, details => {
+            seen.push(details)
+        })
+
+        expect(seen.map(details => details.lastAssistantText)).toEqual(['checking', 'checking'])
     })
 
     test('ignores message_end for messages the subagent did not author', async () => {
@@ -286,22 +336,20 @@ describe('runSubagent', () => {
         expect(seen).toHaveLength(0)
     })
 
-    test('keeps streaming after the clock steps backwards', async () => {
+    test('measures elapsed from the start of the run', async () => {
         const seen: SubagentDetails[] = []
-        session.text = 'first'
         session.onPrompt = () => {
+            clock += 250
             session.emitAssistant()
-            clock -= 5_000
-            session.text = 'second'
-            session.emitAssistant()
+            clock += 1_000
             return Promise.resolve()
         }
 
-        await runSubagent('task', undefined, details => {
+        const result = await runSubagent('task', undefined, details => {
             seen.push(details)
         })
-
-        expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
+        expect(seen.map(details => details.elapsedMs)).toEqual([250])
+        expect(result.details.elapsedMs).toBe(1_250)
     })
 
     test('throws before creating a session when the signal is already aborted', async () => {
@@ -346,7 +394,6 @@ describe('runSubagent', () => {
 
     test('removes the abort listener after a successful run', async () => {
         const controller = new AbortController()
-
         await runSubagent('task', controller.signal, noProgress)
         controller.abort()
 
@@ -372,7 +419,6 @@ describe('runSubagent', () => {
             session.messages = [assistant({stopReason})]
 
             const result = await runSubagent('task', undefined, noProgress)
-
             expect(result.text).toBe('hello')
             expect(result.details.stopReason).toBe(stopReason)
         }
@@ -428,7 +474,6 @@ describe('extension', () => {
     }
 
     const ctx = (cwd: string) => ({cwd}) as Parameters<SubagentTool['execute']>[4]
-
     test('forwards subagent progress to the tool update callback', async () => {
         const tool = registeredTool()
         const updates: Array<{text: string; task: string}> = []
@@ -456,7 +501,6 @@ describe('extension', () => {
 
     test('registers a read-only subagent tool with a task parameter', () => {
         const tool = registeredTool()
-
         expect(tool.name).toBe('subagent')
         expect(tool.label).toBe('Subagent')
         expect(tool.description).toContain('read-only')
@@ -476,7 +520,6 @@ describe('extension', () => {
             undefined,
             ctx('/fake/cwd')
         )
-
         expect(result).toEqual({
             content: [{type: 'text', text: 'hello'}],
             details: {...expectedDetails, task: 'find the bug'}
