@@ -22,7 +22,8 @@ type FakeSession = {
     getSessionStats: ReturnType<typeof mock>
     subscribe: ReturnType<typeof mock>
     unsubscribe: ReturnType<typeof mock>
-    emit: (event: {type: string}) => void
+    emit: (event: {type: string; message?: unknown}) => void
+    emitAssistant: () => void
 }
 
 type SubagentTool = ToolDefinition<TObject<{task: TString}>>
@@ -67,6 +68,11 @@ const makeSession = (): FakeSession => {
         unsubscribe,
         emit: event => {
             for (const listener of listeners) listener(event)
+        },
+        emitAssistant: () => {
+            const last = session.messages.findLast(message => message.role === 'assistant')
+
+            session.emit({type: 'message_end', message: last})
         }
     }
     return session
@@ -85,7 +91,10 @@ const inMemory = mock((_cwd: string) => sessionManager)
 const settingsCreate = mock((_cwd: string, _agentDir: string) => settingsManager)
 const getAgentDir = mock(() => '/fake/agent')
 
+const actual = await import('@earendil-works/pi-coding-agent')
+
 await mock.module('@earendil-works/pi-coding-agent', () => ({
+    ...actual,
     createAgentSession,
     DefaultResourceLoader: class {
         constructor(options: unknown) {
@@ -132,7 +141,8 @@ const expectedDetails = {
     stopReason: 'stop' as const,
     timestamp: 1700000000000,
     task: 'task',
-    lastAssistantText: 'hello'
+    lastAssistantText: 'hello',
+    elapsedMs: expect.any(Number)
 }
 
 describe('runSubagent', () => {
@@ -226,10 +236,10 @@ describe('runSubagent', () => {
         const seen: SubagentDetails[] = []
         session.text = 'partial'
         session.onPrompt = () => {
-            session.emit({type: 'message_end'})
+            session.emitAssistant()
             session.emit({type: 'tool_execution_end'})
             session.text = 'hello'
-            session.emit({type: 'message_end'})
+            session.emitAssistant()
             return Promise.resolve()
         }
 
@@ -246,11 +256,11 @@ describe('runSubagent', () => {
         const seen: SubagentDetails[] = []
         session.text = 'first'
         session.onPrompt = () => {
-            session.emit({type: 'message_end'})
-            session.emit({type: 'message_end'})
+            session.emitAssistant()
+            session.emitAssistant()
             clock += progressThrottleMs
             session.text = 'second'
-            session.emit({type: 'message_end'})
+            session.emitAssistant()
             return Promise.resolve()
         }
 
@@ -261,12 +271,11 @@ describe('runSubagent', () => {
         expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
     })
 
-    test('holds progress back until an assistant message exists', async () => {
+    test('ignores message_end for messages the subagent did not author', async () => {
         const seen: SubagentDetails[] = []
-        session.messages = [{role: 'user'}]
         session.onPrompt = () => {
-            session.emit({type: 'message_end'})
-            session.messages = [{role: 'user'}, assistant()]
+            session.emit({type: 'message_end', message: {role: 'user'}})
+            session.emit({type: 'message_end', message: {role: 'toolResult'}})
             return Promise.resolve()
         }
 
@@ -275,6 +284,24 @@ describe('runSubagent', () => {
         })
 
         expect(seen).toHaveLength(0)
+    })
+
+    test('keeps streaming after the clock steps backwards', async () => {
+        const seen: SubagentDetails[] = []
+        session.text = 'first'
+        session.onPrompt = () => {
+            session.emitAssistant()
+            clock -= 5_000
+            session.text = 'second'
+            session.emitAssistant()
+            return Promise.resolve()
+        }
+
+        await runSubagent('task', undefined, details => {
+            seen.push(details)
+        })
+
+        expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
     })
 
     test('throws before creating a session when the signal is already aborted', async () => {
@@ -406,7 +433,7 @@ describe('extension', () => {
         const tool = registeredTool()
         const updates: Array<{text: string; task: string}> = []
         session.onPrompt = () => {
-            session.emit({type: 'message_end'})
+            session.emitAssistant()
             return Promise.resolve()
         }
 

@@ -2,6 +2,7 @@ import js from '@eslint/js'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 import prettierConfig from 'eslint-config-prettier/flat'
+import stylistic from '@stylistic/eslint-plugin'
 
 export default tseslint.config(
     {ignores: ['dist', 'node_modules', '.claude', 'test/**/__fixtures__/**']},
@@ -68,5 +69,26 @@ export default tseslint.config(
         }
     },
     // Last, so it wins: every stylistic rule set above is switched off here.
-    prettierConfig
+    prettierConfig,
+    // After prettierConfig: prettier never touches blank lines between statements,
+    // so this is ours to decide rather than a conflict.
+    {
+        files: ['**/*.ts'],
+        plugins: {'@stylistic': stylistic},
+        rules: {
+            '@stylistic/padding-line-between-statements': [
+                'error',
+                // Order matters: the last matching entry wins. This one packs guard
+                // clauses; the block-like entries below override it for braced ifs.
+                {blankLine: 'never', prev: 'if', next: ['if', 'return']},
+                // Braced blocks breathe.
+                {blankLine: 'always', prev: 'block-like', next: '*'},
+                {blankLine: 'always', prev: '*', next: 'block-like'},
+                // Declarations group, then sit against the code that uses them.
+                {blankLine: 'never', prev: 'singleline-const', next: 'singleline-const'},
+                {blankLine: 'never', prev: ['const', 'let'], next: 'expression'},
+                {blankLine: 'never', prev: 'expression', next: 'return'}
+            ]
+        }
+    }
 )
