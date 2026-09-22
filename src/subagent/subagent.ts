@@ -11,7 +11,7 @@ import {
     SessionManager,
     SettingsManager
 } from '@earendil-works/pi-coding-agent'
-import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
+import type {AgentToolUpdateCallback, ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
@@ -22,7 +22,8 @@ import {renderCall, renderResult} from './subagentTui'
 enum SubagentErrors {
     EmptyOutput = 'Empty model output',
     Aborted = 'Subagent aborted',
-    RunFailed = 'Subagent run failed: '
+    RunFailed = 'Subagent run failed: ',
+    FetchFailed = 'Fetch failed: '
 }
 
 enum SubagentTools {
@@ -52,28 +53,12 @@ type SubagentResult = {
     details: SubagentDetails
 }
 
-type SubagentProgress = (details: SubagentDetails) => void
+type SubagentUpdate = AgentToolUpdateCallback<SubagentDetails> | undefined
 
 const progressThrottleMs = 100
 
 const lastAssistant = (session: AgentSession): AssistantMessage | undefined =>
     session.messages.findLast(message => message.role === 'assistant')
-
-// message_end fires before the session appends the message, so fold it in by hand.
-const withPending = (stats: SessionStats, message: AssistantMessage): SessionStats => ({
-    ...stats,
-    assistantMessages: stats.assistantMessages + 1,
-    totalMessages: stats.totalMessages + 1,
-    toolCalls: stats.toolCalls + message.content.filter(block => block.type === 'toolCall').length,
-    tokens: {
-        input: stats.tokens.input + message.usage.input,
-        output: stats.tokens.output + message.usage.output,
-        cacheRead: stats.tokens.cacheRead + message.usage.cacheRead,
-        cacheWrite: stats.tokens.cacheWrite + message.usage.cacheWrite,
-        total: stats.tokens.total + message.usage.totalTokens
-    },
-    cost: stats.cost + message.usage.cost.total
-})
 
 const buildDetails = (
     stats: SessionStats,
@@ -123,7 +108,7 @@ const configuredOptions = (ctx: ExtensionContext): SubagentOptions => {
 const runSubagent = async (
     task: string,
     signal: AbortSignal | undefined,
-    onProgress: SubagentProgress,
+    onUpdate: SubagentUpdate,
     options: SubagentOptions = defaultOptions(process.cwd())
 ): Promise<SubagentResult> => {
     const startedAt = performance.now()
@@ -161,7 +146,7 @@ const runSubagent = async (
     let lastText = ''
 
     const unsubscribe = session.subscribe(event => {
-        if (event.type !== 'message_end' || event.message.role !== 'assistant') return
+        if (event.type !== 'turn_end' || event.message.role !== 'assistant') return
 
         lastText = session.getLastAssistantText() ?? lastText
 
@@ -170,15 +155,15 @@ const runSubagent = async (
         if (now - progressedAt < progressThrottleMs) return
 
         progressedAt = now
-        onProgress(
-            buildDetails(
-                withPending(session.getSessionStats(), event.message),
-                task,
-                event.message,
-                lastText,
-                startedAt
-            )
+
+        const details = buildDetails(
+            session.getSessionStats(),
+            task,
+            event.message,
+            lastText,
+            startedAt
         )
+        onUpdate?.({content: [{type: 'text', text: lastText}], details})
     })
 
     try {
@@ -237,11 +222,7 @@ export default function (pi: ExtensionAPI) {
             const {text, details} = await runSubagent(
                 params.task,
                 signal,
-                progress =>
-                    onUpdate?.({
-                        content: [{type: 'text', text: progress.lastAssistantText}],
-                        details: progress
-                    }),
+                onUpdate,
                 configuredOptions(ctx)
             )
 
@@ -255,5 +236,5 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {progressThrottleMs, runSubagent}
-export type {SubagentDetails, SubagentProgress}
+export {configuredOptions, progressThrottleMs, runSubagent, SubagentErrors}
+export type {SubagentDetails, SubagentUpdate}

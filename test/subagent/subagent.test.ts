@@ -5,7 +5,7 @@ import type {TObject, TString} from 'typebox'
 import {rmSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
-import type {SubagentDetails, SubagentProgress} from '../../src/subagent/subagent'
+import type {SubagentDetails, SubagentUpdate} from '../../src/subagent/subagent'
 
 type FakeMessage = Pick<
     AssistantMessage,
@@ -85,13 +85,13 @@ const makeSession = (): FakeSession => {
         },
         emitAssistant: () => {
             const last = session.messages.findLast(message => message.role === 'assistant')
-            session.emit({type: 'message_end', message: last})
+            session.emit({type: 'turn_end', message: last})
         }
     }
     return session
 }
 
-const noProgress: SubagentProgress = () => undefined
+const noProgress: SubagentUpdate = undefined
 
 let session = makeSession()
 let onReload: () => Promise<void> = () => Promise.resolve()
@@ -146,15 +146,6 @@ beforeEach(() => {
     getAgentDir.mockClear()
     rmSync(configPath, {force: true})
 })
-
-// Progress snapshots fold in the message that just ended (see withPending).
-const pendingStats: SessionStats = {
-    ...stats,
-    assistantMessages: 2,
-    totalMessages: 3,
-    tokens: {input: 14, output: 7, cacheRead: 1, cacheWrite: 0, total: 22},
-    cost: 0.5
-}
 
 const expectedDetails = {
     ...stats,
@@ -262,10 +253,10 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        const result = await runSubagent('task', undefined, details => {
-            seen.push(details)
+        const result = await runSubagent('task', undefined, update => {
+            seen.push(update.details)
         })
-        expect(seen).toEqual([{...expectedDetails, ...pendingStats, lastAssistantText: 'partial'}])
+        expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}])
         expect(result.details).toEqual(expectedDetails)
         expect(session.unsubscribe).toHaveBeenCalledTimes(1)
     })
@@ -283,29 +274,11 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await runSubagent('task', undefined, details => {
-            seen.push(details)
+        await runSubagent('task', undefined, update => {
+            seen.push(update.details)
         })
 
         expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
-    })
-
-    test('counts the tool calls of the message that just ended', async () => {
-        const seen: SubagentDetails[] = []
-        session.messages.push(
-            assistant({content: [{type: 'toolCall', id: '1', name: 'read', arguments: {}}]})
-        )
-
-        session.onPrompt = () => {
-            session.emitAssistant()
-            return Promise.resolve()
-        }
-
-        await runSubagent('task', undefined, details => {
-            seen.push(details)
-        })
-
-        expect(seen.map(details => details.toolCalls)).toEqual([1])
     })
 
     test('keeps the last text when a tool-only turn has none', async () => {
@@ -321,23 +294,23 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await runSubagent('task', undefined, details => {
-            seen.push(details)
+        await runSubagent('task', undefined, update => {
+            seen.push(update.details)
         })
 
         expect(seen.map(details => details.lastAssistantText)).toEqual(['checking', 'checking'])
     })
 
-    test('ignores message_end for messages the subagent did not author', async () => {
+    test('ignores turn_end for messages the subagent did not author', async () => {
         const seen: SubagentDetails[] = []
         session.onPrompt = () => {
-            session.emit({type: 'message_end', message: {role: 'user'}})
-            session.emit({type: 'message_end', message: {role: 'toolResult'}})
+            session.emit({type: 'turn_end', message: {role: 'user'}})
+            session.emit({type: 'turn_end', message: {role: 'toolResult'}})
             return Promise.resolve()
         }
 
-        await runSubagent('task', undefined, details => {
-            seen.push(details)
+        await runSubagent('task', undefined, update => {
+            seen.push(update.details)
         })
 
         expect(seen).toHaveLength(0)
@@ -352,8 +325,8 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        const result = await runSubagent('task', undefined, details => {
-            seen.push(details)
+        const result = await runSubagent('task', undefined, update => {
+            seen.push(update.details)
         })
         expect(seen.map(details => details.elapsedMs)).toEqual([250])
         expect(result.details.elapsedMs).toBe(1_250)
