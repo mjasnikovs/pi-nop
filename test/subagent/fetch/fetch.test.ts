@@ -1,7 +1,8 @@
 import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
 import type {ExtensionAPI, ExtensionContext, ToolDefinition} from '@earendil-works/pi-coding-agent'
+import type {Api, Model} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
-import type {SubagentUpdate} from '../../../src/subagent/subagent'
+import type {SubagentOptions, SubagentUpdate} from '../../../src/subagent/subagent'
 
 type FetchTool = ToolDefinition<TObject<{url: TString; query: TString}>>
 
@@ -11,12 +12,30 @@ const runSubagent = mock((_task: string, _signal: unknown, onUpdate: SubagentUpd
     onUpdate?.(update as Parameters<NonNullable<SubagentUpdate>>[0])
     return Promise.resolve({text: 'answer', details})
 })
-const options = {cwd: '/cwd', prompt: '', tools: ['read'], thinkingLevel: 'low'}
+const model = {contextWindow: 1000} as Model<Api>
+const options = {
+    cwd: '/cwd',
+    prompt: '',
+    tools: ['read'],
+    thinkingLevel: 'low',
+    model
+} as Partial<SubagentOptions>
 const configuredOptions = mock((_ctx: ExtensionContext) => options)
-await mock.module('../../../src/subagent/subagent', () => ({runSubagent, configuredOptions}))
+const {SubagentErrors} = await import('../../../src/subagent/subagent')
+await mock.module('../../../src/subagent/subagent', () => ({
+    runSubagent,
+    configuredOptions,
+    SubagentErrors
+}))
+
+const page = (body: string, url = 'https://example.com/final'): Response => {
+    const response = new Response(body, {headers: {'content-type': 'text/plain'}})
+    Object.defineProperty(response, 'url', {value: url})
+    return response
+}
 
 const realFetch = globalThis.fetch
-const fetchMock = mock((_url: string, _init?: RequestInit) => Promise.resolve(new Response('page')))
+const fetchMock = mock((_url: string, _init?: RequestInit) => Promise.resolve(page('page')))
 afterAll(() => {
     globalThis.fetch = realFetch
     mock.restore()
@@ -25,6 +44,7 @@ afterAll(() => {
 const {
     buildTask,
     extractionPrompt,
+    taskShare,
     default: register
 } = await import('../../../src/subagent/fetch/fetch')
 
@@ -32,6 +52,7 @@ const registerTool = mock((_tool: FetchTool) => undefined)
 const pi = {registerTool} as unknown as ExtensionAPI
 const ctx = {cwd: '/cwd'} as unknown as ExtensionContext
 const onUpdate = mock((_update: unknown) => undefined)
+const params = {url: 'https://example.com', query: 'what'}
 
 const tool = (): FetchTool => {
     register(pi)
@@ -40,9 +61,10 @@ const tool = (): FetchTool => {
 beforeEach(() => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
     fetchMock.mockClear()
-    fetchMock.mockImplementation(() => Promise.resolve(new Response('page')))
+    fetchMock.mockImplementation(() => Promise.resolve(page('page')))
     runSubagent.mockClear()
     configuredOptions.mockClear()
+    configuredOptions.mockImplementation(() => options)
     registerTool.mockClear()
     onUpdate.mockClear()
 })
@@ -52,14 +74,13 @@ describe('fetch tool', () => {
         expect(tool().name).toBe('subagent-fetch')
     })
 
-    test('fetches the page and hands it to the subagent with no tools', async () => {
+    test('fetches the page and hands the digest to the subagent with no tools', async () => {
         const signal = new AbortController().signal
-        const params = {url: 'https://example.com', query: 'what'}
         const result = await tool().execute('id', params, signal, onUpdate, ctx)
         expect(fetchMock).toHaveBeenCalledWith('https://example.com', {signal})
         expect(configuredOptions).toHaveBeenCalledWith(ctx)
         expect(runSubagent).toHaveBeenCalledWith(
-            buildTask('what', 'https://example.com', 'page'),
+            buildTask('what', 'https://example.com/final', 'page'),
             signal,
             onUpdate,
             {...options, prompt: extractionPrompt, tools: []}
@@ -68,13 +89,7 @@ describe('fetch tool', () => {
     })
 
     test('forwards progress to onUpdate', async () => {
-        await tool().execute(
-            'id',
-            {url: 'https://example.com', query: 'q'},
-            undefined,
-            onUpdate,
-            ctx
-        )
+        await tool().execute('id', params, undefined, onUpdate, ctx)
 
         expect(onUpdate).toHaveBeenCalledWith(update)
     })
@@ -83,23 +98,50 @@ describe('fetch tool', () => {
         expect(buildTask('q', 'u', 'p')).toBe('<query>q</query>\n<url>u</url>\n<page>\np\n</page>')
     })
 
+    test('throws when the task does not fit the model context window', async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(page('x'.repeat(model.contextWindow * taskShare * 4)))
+        )
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            SubagentErrors.PageTooBig
+        )
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test('throws when no model is selected', async () => {
+        configuredOptions.mockImplementation(() => ({...options, model: undefined}))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            SubagentErrors.NoModel
+        )
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
     test('throws on a non-ok response', async () => {
         fetchMock.mockImplementation(() =>
             Promise.resolve(new Response('', {status: 404, statusText: 'Not Found'}))
         )
 
-        await expect(
-            tool().execute('id', {url: 'https://example.com', query: 'q'}, undefined, onUpdate, ctx)
-        ).rejects.toThrow('Fetch failed: 404 Not Found')
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Fetch failed: 404 Not Found'
+        )
         expect(runSubagent).not.toHaveBeenCalled()
     })
 
     test('throws on an invalid url', async () => {
-        globalThis.fetch = realFetch
-
         await expect(
             tool().execute('id', {url: 'not a url', query: 'q'}, undefined, onUpdate, ctx)
         ).rejects.toThrow()
+        expect(fetchMock).not.toHaveBeenCalled()
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test('rejects schemes other than http and https', async () => {
+        await expect(
+            tool().execute('id', {url: 'file:///etc/passwd', query: 'q'}, undefined, onUpdate, ctx)
+        ).rejects.toThrow('Fetch failed: unsupported protocol file:')
+        expect(fetchMock).not.toHaveBeenCalled()
         expect(runSubagent).not.toHaveBeenCalled()
     })
 })

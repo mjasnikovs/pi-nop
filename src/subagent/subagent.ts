@@ -23,7 +23,9 @@ enum SubagentErrors {
     EmptyOutput = 'Empty model output',
     Aborted = 'Subagent aborted',
     RunFailed = 'Subagent run failed: ',
-    FetchFailed = 'Fetch failed: '
+    FetchFailed = 'Fetch failed: ',
+    NoModel = 'No model selected',
+    PageTooBig = 'Page too big for the subagent model context window'
 }
 
 enum SubagentTools {
@@ -237,4 +239,4 @@ export default function (pi: ExtensionAPI) {
 }
 
 export {configuredOptions, progressThrottleMs, runSubagent, SubagentErrors}
-export type {SubagentDetails, SubagentUpdate}
+export type {SubagentDetails, SubagentOptions, SubagentUpdate}

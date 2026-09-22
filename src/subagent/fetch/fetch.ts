@@ -1,21 +1,41 @@
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent'
+import {estimateTokens} from '@earendil-works/pi-coding-agent'
+import type {Api, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
 import {configuredOptions, runSubagent, SubagentErrors} from '../subagent'
+import {digest} from './digest'
 
 const extractionPrompt =
     'Answer the query using only the page text. Say if the page does not cover it.'
 
-const fetchPage = async (url: string, signal: AbortSignal | undefined): Promise<string> => {
+// MAGIC NUMBER: share of the context window the task may take. The rest is headroom for
+// the system prompt, the answer and the rough 4 chars per token estimate pi uses.
+const taskShare = 0.75
+
+const fetchPage = async (url: string, signal: AbortSignal | undefined): Promise<Response> => {
+    const {protocol} = new URL(url)
+
+    if (protocol !== 'http:' && protocol !== 'https:')
+        throw new Error(SubagentErrors.FetchFailed + `unsupported protocol ${protocol}`)
+
     const response = await fetch(url, {signal})
 
     if (!response.ok)
         throw new Error(SubagentErrors.FetchFailed + `${response.status} ${response.statusText}`)
-    return response.text()
+    return response
 }
 
 const buildTask = (query: string, url: string, page: string): string =>
     `<query>${query}</query>\n<url>${url}</url>\n<page>\n${page}\n</page>`
+
+const assertFits = (task: string, model: Model<Api> | undefined): void => {
+    if (model === undefined) throw new Error(SubagentErrors.NoModel)
+
+    const tokens = estimateTokens({role: 'user', content: task, timestamp: Date.now()})
+
+    if (tokens > model.contextWindow * taskShare) throw new Error(SubagentErrors.PageTooBig)
+}
 
 export default function (pi: ExtensionAPI) {
     pi.registerTool({
@@ -34,13 +54,12 @@ export default function (pi: ExtensionAPI) {
             query: Type.String({description: 'What to extract from the page.'})
         }),
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
-            const page = await fetchPage(params.url, signal)
-            const {text, details} = await runSubagent(
-                buildTask(params.query, params.url, page),
-                signal,
-                onUpdate,
-                {...configuredOptions(ctx), prompt: extractionPrompt, tools: []}
-            )
+            const options = {...configuredOptions(ctx), prompt: extractionPrompt, tools: []}
+            const response = await fetchPage(params.url, signal)
+            const task = buildTask(params.query, response.url, await digest(response))
+            assertFits(task, options.model)
+
+            const {text, details} = await runSubagent(task, signal, onUpdate, options)
 
             return {
                 content: [{type: 'text', text}],
@@ -50,4 +69,4 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {buildTask, extractionPrompt}
+export {buildTask, extractionPrompt, taskShare}
