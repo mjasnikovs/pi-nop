@@ -2,6 +2,9 @@ import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
 import type {ExtensionAPI, SessionStats, ToolDefinition} from '@earendil-works/pi-coding-agent'
 import type {AssistantMessage, StopReason} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
+import {rmSync, writeFileSync} from 'node:fs'
+import {join} from 'node:path'
+import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
 import type {SubagentDetails, SubagentProgress} from '../../src/subagent/subagent'
 
 type FakeMessage = Pick<
@@ -99,7 +102,6 @@ const sessionManager = {kind: 'in-memory'}
 const settingsManager = {kind: 'settings'}
 const inMemory = mock((_cwd: string) => sessionManager)
 const settingsCreate = mock((_cwd: string, _agentDir: string) => settingsManager)
-const getAgentDir = mock(() => '/fake/agent')
 const actual = await import('@earendil-works/pi-coding-agent')
 await mock.module('@earendil-works/pi-coding-agent', () => ({
     ...actual,
@@ -115,6 +117,8 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({
     SettingsManager: {create: settingsCreate}
 }))
 
+const {saveConfig} = await import('../../src/config/config')
+const configPath = join(agentDir, 'pi-nop.json')
 const realNow = performance.now.bind(performance)
 let clock = 1_000
 afterAll(() => {
@@ -127,6 +131,8 @@ const {
     runSubagent,
     default: register
 } = await import('../../src/subagent/subagent')
+useAgentDir()
+
 beforeEach(() => {
     clock = 1_000
     performance.now = () => clock
@@ -138,6 +144,7 @@ beforeEach(() => {
     inMemory.mockClear()
     settingsCreate.mockClear()
     getAgentDir.mockClear()
+    rmSync(configPath, {force: true})
 })
 
 // Progress snapshots fold in the message that just ended (see withPending).
@@ -177,11 +184,11 @@ describe('runSubagent', () => {
             thinkingLevel: 'high'
         })
 
-        expect(settingsCreate).toHaveBeenCalledWith('/opt/cwd', '/fake/agent')
+        expect(settingsCreate).toHaveBeenCalledWith('/opt/cwd', agentDir)
         expect(loaderOptions).toHaveBeenCalledTimes(1)
         expect(loaderOptions).toHaveBeenCalledWith({
             cwd: '/opt/cwd',
-            agentDir: '/fake/agent',
+            agentDir: agentDir,
             settingsManager,
             noExtensions: true,
             noSkills: true,
@@ -225,7 +232,7 @@ describe('runSubagent', () => {
             expect.objectContaining({
                 cwd: process.cwd(),
                 tools: ['read', 'grep', 'find', 'ls'],
-                thinkingLevel: 'medium'
+                thinkingLevel: undefined
             })
         )
         expect(loaderOptions).toHaveBeenCalledWith(expect.objectContaining({systemPrompt: ''}))
@@ -473,7 +480,68 @@ describe('extension', () => {
         return tool
     }
 
-    const ctx = (cwd: string) => ({cwd}) as Parameters<SubagentTool['execute']>[4]
+    const registryModel = {provider: 'acme', id: 'fast'}
+    const getAvailable = mock(() => [registryModel])
+    const hostModel = {provider: 'host', id: 'current'}
+    const notify = mock((_message: string, _level: string) => undefined)
+    const ctx = (cwd: string) =>
+        ({
+            cwd,
+            model: hostModel,
+            thinkingLevel: 'xhigh',
+            modelRegistry: {getAvailable},
+            ui: {notify}
+        }) as unknown as Parameters<SubagentTool['execute']>[4]
+    test('warns and uses the host model and thinking level when the config is broken', async () => {
+        writeFileSync(configPath, 'nope')
+
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+
+        expect(notify).toHaveBeenCalledWith(
+            'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.',
+            'warning'
+        )
+        expect(createAgentSession).toHaveBeenCalledWith(
+            expect.objectContaining({thinkingLevel: 'xhigh', model: hostModel})
+        )
+    })
+
+    test('uses the host model and thinking level when nothing is saved', async () => {
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+
+        expect(createAgentSession).toHaveBeenCalledWith(
+            expect.objectContaining({thinkingLevel: 'xhigh', model: hostModel})
+        )
+    })
+
+    test('runs with the saved thinking level and the host model by default', async () => {
+        saveConfig({thinkingLevel: 'high'})
+
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+
+        expect(createAgentSession).toHaveBeenCalledWith(
+            expect.objectContaining({thinkingLevel: 'high', model: hostModel})
+        )
+    })
+
+    test('resolves the saved model through the registry', async () => {
+        saveConfig({model: 'acme/fast', thinkingLevel: 'low'})
+
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+
+        expect(createAgentSession).toHaveBeenCalledWith(
+            expect.objectContaining({thinkingLevel: 'low', model: registryModel})
+        )
+    })
+
+    test('falls back to the host model when the saved one is unknown', async () => {
+        saveConfig({model: 'acme/gone', thinkingLevel: 'low'})
+
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+
+        expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({model: hostModel}))
+    })
+
     test('forwards subagent progress to the tool update callback', async () => {
         const tool = registeredTool()
         const updates: Array<{text: string; task: string}> = []

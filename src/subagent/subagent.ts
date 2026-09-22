@@ -1,4 +1,9 @@
-import type {AgentSession, ExtensionAPI, SessionStats} from '@earendil-works/pi-coding-agent'
+import type {
+    AgentSession,
+    ExtensionAPI,
+    ExtensionContext,
+    SessionStats
+} from '@earendil-works/pi-coding-agent'
 import {
     createAgentSession,
     DefaultResourceLoader,
@@ -10,6 +15,8 @@ import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
+import {findModel, loadConfig} from '../config/config'
+import type {NopConfig} from '../config/config'
 import {renderCall, renderResult} from './subagentTui'
 
 enum SubagentErrors {
@@ -29,7 +36,7 @@ type SubagentOptions = {
     cwd: string
     prompt: string
     tools: SubagentTools[]
-    thinkingLevel: ThinkingLevel
+    thinkingLevel?: ThinkingLevel
     model?: Model<Api>
 }
 
@@ -88,9 +95,30 @@ const buildDetails = (
 const defaultOptions = (cwd: string): SubagentOptions => ({
     cwd,
     prompt: '',
-    tools: [SubagentTools.Read, SubagentTools.Grep, SubagentTools.Find, SubagentTools.Ls],
-    thinkingLevel: 'medium'
+    tools: [SubagentTools.Read, SubagentTools.Grep, SubagentTools.Find, SubagentTools.Ls]
 })
+
+const brokenConfig =
+    'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
+
+const safeConfig = (ctx: ExtensionContext): NopConfig => {
+    try {
+        return loadConfig()
+    } catch {
+        ctx.ui.notify(brokenConfig, 'warning')
+        return {}
+    }
+}
+
+const configuredOptions = (ctx: ExtensionContext): SubagentOptions => {
+    const config = safeConfig(ctx)
+
+    return {
+        ...defaultOptions(ctx.cwd),
+        thinkingLevel: config.thinkingLevel ?? ctx.thinkingLevel,
+        model: findModel(ctx.modelRegistry, config.model) ?? ctx.model
+    }
+}
 
 const runSubagent = async (
     task: string,
@@ -214,7 +242,7 @@ export default function (pi: ExtensionAPI) {
                         content: [{type: 'text', text: progress.lastAssistantText}],
                         details: progress
                     }),
-                defaultOptions(ctx.cwd)
+                configuredOptions(ctx)
             )
 
             return {

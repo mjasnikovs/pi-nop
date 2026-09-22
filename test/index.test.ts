@@ -12,13 +12,15 @@ type SessionStartHandler = ExtensionHandler<SessionStartEvent>
 
 const on = mock((_event: string, _handler: SessionStartHandler) => () => undefined)
 const registerTool = mock((_tool: ToolDefinition) => undefined)
+const registerCommand = mock((_name: string) => undefined)
 const notify = mock((_message: string, _level: string) => undefined)
-const pi = {on, registerTool} as unknown as ExtensionAPI
+const pi = {on, registerTool, registerCommand} as unknown as ExtensionAPI
 const ctx = {ui: {notify}} as unknown as ExtensionContext
 const event: SessionStartEvent = {type: 'session_start', reason: 'startup'}
 beforeEach(() => {
     on.mockClear()
     registerTool.mockClear()
+    registerCommand.mockClear()
     notify.mockClear()
 })
 
@@ -29,6 +31,14 @@ describe('extension', () => {
         expect(registerTool).toHaveBeenCalledTimes(1)
         const [tool] = registerTool.mock.calls[0] as [ToolDefinition]
         expect(tool.name).toBe('subagent')
+    })
+
+    test('registers the config command', () => {
+        register(pi)
+
+        expect(registerCommand).toHaveBeenCalledTimes(1)
+        const [name] = registerCommand.mock.calls[0] as [string]
+        expect(name).toBe('nop-config')
     })
 
     test('notifies on session start', () => {
