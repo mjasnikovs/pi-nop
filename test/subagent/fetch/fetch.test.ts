@@ -85,7 +85,33 @@ describe('fetch tool', () => {
             onUpdate,
             {...options, prompt: extractionPrompt, tools: []}
         )
-        expect(result).toEqual({content: [{type: 'text', text: 'answer'}], details})
+        expect(result).toEqual({
+            content: [{type: 'text', text: 'answer'}],
+            details: {...details, task: 'what https://example.com'}
+        })
+    })
+
+    test('renders through the shared subagent TUI', () => {
+        const {renderCall, renderResult} = tool()
+        expect(renderCall).toBeInstanceOf(Function)
+        expect(renderResult).toBeInstanceOf(Function)
+    })
+
+    test('titles the row with query and url', () => {
+        const {renderCall} = tool()
+        const render = {
+            args: params,
+            state: {},
+            invalidate: () => undefined,
+            executionStarted: true
+        }
+        const theme = {fg: (_c: string, text: string) => text, bold: (text: string) => text}
+        const out =
+            renderCall?.(params, theme as never, render as never)
+                ?.render(80)
+                .join('\n') ?? ''
+        expect(out).toContain('subagent-fetch')
+        expect(out).toContain('what https://example.com')
     })
 
     test('forwards progress to onUpdate', async () => {
@@ -127,6 +153,41 @@ describe('fetch tool', () => {
             'Fetch failed: 404 Not Found'
         )
         expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test('surfaces the cause when fetch itself fails', async () => {
+        const cause = new Error('Hostname/IP does not match certificate')
+        fetchMock.mockImplementation(() => Promise.reject(new TypeError('fetch failed', {cause})))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Fetch failed: fetch failed: Hostname/IP does not match certificate'
+        )
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test('reports a cancel during the fetch as an abort', async () => {
+        const controller = new AbortController()
+        fetchMock.mockImplementation(() => {
+            controller.abort()
+            return Promise.reject(new DOMException('aborted', 'AbortError'))
+        })
+
+        await expect(
+            tool().execute('id', params, controller.signal, onUpdate, ctx)
+        ).rejects.toThrow(SubagentErrors.Aborted)
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test('titles a half-streamed call without the word undefined', () => {
+        const {renderCall} = tool()
+        const render = {args: {query: 'what'}, state: {}, invalidate: () => undefined}
+        const theme = {fg: (_c: string, text: string) => text, bold: (text: string) => text}
+        const out =
+            renderCall?.({query: 'what'} as never, theme as never, render as never)
+                ?.render(80)
+                .join('\n') ?? ''
+        expect(out).toContain('subagent-fetch - what')
+        expect(out).not.toContain('undefined')
     })
 
     test('throws on an invalid url', async () => {

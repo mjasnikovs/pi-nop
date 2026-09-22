@@ -13,7 +13,7 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import type {AgentToolUpdateCallback, ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
-import {Type} from 'typebox'
+import {type Static, type TObject, Type} from 'typebox'
 
 import {findModel, loadConfig} from '../config/config'
 import type {NopConfig} from '../config/config'
@@ -195,8 +195,46 @@ const runSubagent = async (
     }
 }
 
+// How a tool turns its params into the subagent task. It gets the configured options and may
+// narrow them (prompt, tools). Everything else (run, progress, TUI) is shared and not optional.
+type SubagentPrepare<T extends TObject> = (
+    params: Static<T>,
+    signal: AbortSignal | undefined,
+    options: SubagentOptions
+) => Promise<{task: string; options: SubagentOptions}>
+
+type SubagentToolSpec<T extends TObject> = {
+    name: string
+    label: string
+    description: string
+    parameters: T
+    title: (args: Static<T> | undefined) => string | undefined
+    prepare: SubagentPrepare<T>
+}
+
+const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: SubagentToolSpec<T>) => {
+    pi.registerTool<T, SubagentDetails>({
+        name: spec.name,
+        label: spec.label,
+        description: spec.description,
+        parameters: spec.parameters,
+        async execute(_toolCallId, params, signal, onUpdate, ctx) {
+            const {task, options} = await spec.prepare(params, signal, configuredOptions(ctx))
+            const {text, details} = await runSubagent(task, signal, onUpdate, options)
+
+            return {
+                content: [{type: 'text', text}],
+                details: {...details, task: spec.title(params) ?? task}
+            }
+        },
+        renderCall: (args, theme, ctx) => renderCall(spec.name, spec.title(args), theme, ctx),
+        renderResult: (result, options, theme, ctx) =>
+            renderResult(spec.name, spec.title(ctx.args), result, options, theme, ctx)
+    })
+}
+
 export default function (pi: ExtensionAPI) {
-    pi.registerTool({
+    registerSubagentTool(pi, {
         name: 'subagent',
         label: 'Subagent',
         description:
@@ -220,23 +258,10 @@ export default function (pi: ExtensionAPI) {
         parameters: Type.Object({
             task: Type.String({description: 'Task for the subagent to perform.'})
         }),
-        async execute(_toolCallId, params, signal, onUpdate, ctx) {
-            const {text, details} = await runSubagent(
-                params.task,
-                signal,
-                onUpdate,
-                configuredOptions(ctx)
-            )
-
-            return {
-                content: [{type: 'text', text}],
-                details
-            }
-        },
-        renderCall,
-        renderResult
+        title: args => args?.task,
+        prepare: (params, _signal, options) => Promise.resolve({task: params.task, options})
     })
 }
 
-export {configuredOptions, progressThrottleMs, runSubagent, SubagentErrors}
-export type {SubagentDetails, SubagentOptions, SubagentUpdate}
+export {configuredOptions, progressThrottleMs, registerSubagentTool, runSubagent, SubagentErrors}
+export type {SubagentDetails, SubagentOptions, SubagentToolSpec, SubagentUpdate}

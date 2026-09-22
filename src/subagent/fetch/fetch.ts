@@ -3,7 +3,7 @@ import {estimateTokens} from '@earendil-works/pi-coding-agent'
 import type {Api, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
-import {configuredOptions, runSubagent, SubagentErrors} from '../subagent'
+import {registerSubagentTool, SubagentErrors} from '../subagent'
 import {digest} from './digest'
 
 const extractionPrompt =
@@ -13,13 +13,23 @@ const extractionPrompt =
 // the system prompt, the answer and the rough 4 chars per token estimate pi uses.
 const taskShare = 0.75
 
+// Node wraps network errors as a bare "fetch failed" TypeError with the reason in `cause`.
+const describe = (error: unknown): string => {
+    if (!(error instanceof Error)) return String(error)
+    if (error.cause instanceof Error) return `${error.message}: ${error.cause.message}`
+    return error.message
+}
+
 const fetchPage = async (url: string, signal: AbortSignal | undefined): Promise<Response> => {
     const {protocol} = new URL(url)
 
     if (protocol !== 'http:' && protocol !== 'https:')
         throw new Error(SubagentErrors.FetchFailed + `unsupported protocol ${protocol}`)
 
-    const response = await fetch(url, {signal})
+    const response = await fetch(url, {signal}).catch((error: unknown) => {
+        if (signal?.aborted) throw new Error(SubagentErrors.Aborted, {cause: error})
+        throw new Error(SubagentErrors.FetchFailed + describe(error), {cause: error})
+    })
 
     if (!response.ok)
         throw new Error(SubagentErrors.FetchFailed + `${response.status} ${response.statusText}`)
@@ -38,7 +48,7 @@ const assertFits = (task: string, model: Model<Api> | undefined): void => {
 }
 
 export default function (pi: ExtensionAPI) {
-    pi.registerTool({
+    registerSubagentTool(pi, {
         name: 'subagent-fetch',
         label: 'Subagent Fetch',
         description:
@@ -50,21 +60,21 @@ export default function (pi: ExtensionAPI) {
             + 'guessing from memory. Also use it to read any known URL without stuffing '
             + 'raw content into the main context.',
         parameters: Type.Object({
-            url: Type.String({description: 'URL to fetch. Must be http or https.'}),
+            url: Type.String({
+                description:
+                    'URL to fetch. Must be http or https. Use the host exactly as given. '
+                    + 'Do not add or drop www.'
+            }),
             query: Type.String({description: 'What to extract from the page.'})
         }),
-        async execute(_toolCallId, params, signal, onUpdate, ctx) {
-            const options = {...configuredOptions(ctx), prompt: extractionPrompt, tools: []}
+        // Pi renders while the call is still streaming, so either field may be missing.
+        title: args => [args?.query, args?.url].filter(part => part !== undefined).join(' '),
+        prepare: async (params, signal, configured) => {
+            const options = {...configured, prompt: extractionPrompt, tools: []}
             const response = await fetchPage(params.url, signal)
             const task = buildTask(params.query, response.url, await digest(response))
             assertFits(task, options.model)
-
-            const {text, details} = await runSubagent(task, signal, onUpdate, options)
-
-            return {
-                content: [{type: 'text', text}],
-                details
-            }
+            return {task, options}
         }
     })
 }

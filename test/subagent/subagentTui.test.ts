@@ -6,12 +6,22 @@ import type {SubagentDetails} from '../../src/subagent/subagent'
 import type {SubagentRenderState} from '../../src/subagent/subagentTui'
 import {
     idleTicks,
-    renderCall,
-    renderResult,
+    renderCall as renderCallTui,
+    renderResult as renderResultTui,
     spinnerFrames,
     spinnerIntervalMs,
     SubagentRows
 } from '../../src/subagent/subagentTui'
+
+// The tests drive the renderers the way registerSubagentTool does: name and title come from args.
+const renderCall = (args: {task?: string} | undefined, theme: Theme, ctx: TestContext) =>
+    renderCallTui('subagent', args?.task, theme, ctx as never)
+const renderResult = (
+    result: Parameters<typeof renderResultTui>[2],
+    options: Parameters<typeof renderResultTui>[3],
+    theme: Theme,
+    ctx: TestContext
+) => renderResultTui('subagent', ctx.args?.task, result, options, theme, ctx as never)
 
 const theme = {
     fg: (_color: string, text: string) => text,

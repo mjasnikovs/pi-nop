@@ -15,8 +15,6 @@ type SubagentPhase = 'running' | 'done' | 'error'
 
 type SubagentToolResult = AgentToolResult<SubagentDetails | undefined>
 
-type SubagentArgs = {task?: string}
-
 const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const spinnerIntervalMs = 100
 const idleTicks = 20
@@ -122,7 +120,6 @@ type SubagentRenderState = {
 type SubagentTool = ToolDefinition<TSchema, SubagentDetails, SubagentRenderState>
 
 type SubagentRenderContext = Parameters<NonNullable<SubagentTool['renderCall']>>[2] & {
-    args: SubagentArgs | undefined
     state: SubagentRenderState
 }
 
@@ -193,7 +190,8 @@ const phaseFor = (options: ToolRenderResultOptions, isError: boolean): SubagentP
 }
 
 const buildRows = (
-    task: string | undefined,
+    name: string,
+    title: string | undefined,
     details: SubagentDetails | undefined,
     phase: SubagentPhase,
     fallbackMessage: string,
@@ -207,9 +205,9 @@ const buildRows = (
 
     return [
         `${statusIcon(theme, phase, rows.frame)} `
-            + theme.fg('toolTitle', theme.bold('subagent'))
+            + theme.fg('toolTitle', theme.bold(name))
             + theme.fg('muted', ' - ')
-            + theme.fg('dim', oneLine(task) || '…'),
+            + theme.fg('dim', oneLine(title) || '…'),
         gutter + theme.fg(phase === 'error' ? 'error' : 'toolOutput', message),
         gutter
             + theme.fg('muted', 'TIME ')
@@ -234,7 +232,8 @@ const markdownFor = (state: SubagentRenderState, text: string): Markdown => {
 }
 
 const renderCall = (
-    args: SubagentArgs | undefined,
+    name: string,
+    title: string | undefined,
     theme: Theme,
     ctx: SubagentRenderContext
 ): Component => {
@@ -242,13 +241,15 @@ const renderCall = (
 
     if (!ctx.state.settled) {
         rows.setRunning(true)
-        rows.setRows(buildRows(args?.task, undefined, 'running', '', theme, rows))
+        rows.setRows(buildRows(name, title, undefined, 'running', '', theme, rows))
     }
 
     return (ctx.state.call ??= new CallSlot(ctx.state, rows))
 }
 
 const renderResult = (
+    name: string,
+    title: string | undefined,
     result: SubagentToolResult,
     options: ToolRenderResultOptions,
     theme: Theme,
@@ -269,7 +270,8 @@ const renderResult = (
     rows.setRunning(phase === 'running')
     rows.setRows(
         buildRows(
-            ctx.state.details?.task ?? ctx.args?.task,
+            name,
+            title ?? ctx.state.details?.task,
             ctx.state.details,
             phase,
             text,
