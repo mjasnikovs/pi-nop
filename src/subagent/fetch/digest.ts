@@ -1,5 +1,5 @@
 import {formatSize} from '@earendil-works/pi-coding-agent'
-import {Readability} from '@mozilla/readability'
+import {isProbablyReaderable, Readability} from '@mozilla/readability'
 import {parseHTML} from 'linkedom'
 import TurndownService from 'turndown'
 import {tables} from 'turndown-plugin-gfm'
@@ -9,14 +9,70 @@ import {SubagentErrors} from '../subagent'
 enum ContentKind {
     Html,
     Text,
+    Sniff,
     Unsupported
+}
+
+/** The fields read off a turndown node. Its DOM types are not in this tsconfig lib. */
+type RuleNode = {
+    nodeName: string
+    textContent: string | null
+    firstChild: {nodeName: string} | null
+    getAttribute(name: string): string | null
+}
+
+const fields = new Set(['INPUT', 'SELECT', 'TEXTAREA'])
+const isField = (node: RuleNode): boolean => fields.has(node.nodeName)
+const field = (node: RuleNode): string =>
+    `[${node.nodeName.toLowerCase()} name="${node.getAttribute('name') ?? ''}"]`
+
+const formLine = (node: RuleNode): string => {
+    const method = (node.getAttribute('method') ?? 'get').toLowerCase()
+    return `Form (method=${method}, action=${node.getAttribute('action') ?? ''})`
+}
+
+const blank = (node: RuleNode): string => {
+    if (isField(node)) return field(node)
+    return node.nodeName === 'FORM' ? `\n\n${formLine(node)}\n\n` : ''
 }
 
 const turndown = new TurndownService({
     codeBlockStyle: 'fenced',
     headingStyle: 'atx',
-    bulletListMarker: '-'
+    bulletListMarker: '-',
+    // Turndown drops empty elements before rules run, and fields are usually empty.
+    blankReplacement: (_content, node: RuleNode) => blank(node)
 }).use(tables)
+turndown.remove(['script', 'style', 'noscript', 'template'])
+// Turndown only fences <pre><code>; a bare <pre> would be escaped as prose.
+turndown.addRule('barePre', {
+    filter: (node: RuleNode) => node.nodeName === 'PRE' && node.firstChild?.nodeName !== 'CODE',
+    replacement: (_content, node: RuleNode) => `\n\n\`\`\`\n${node.textContent ?? ''}\n\`\`\`\n\n`
+})
+
+turndown.addRule('form', {
+    filter: 'form',
+    replacement: (content, node: RuleNode) => `\n\n${formLine(node)}\n\n${content}\n\n`
+})
+
+turndown.addRule('field', {
+    filter: (node: RuleNode) => isField(node),
+    replacement: (_content, node: RuleNode) => field(node)
+})
+
+const textMimes = new Set([
+    'application/json',
+    'application/xml',
+    'application/javascript',
+    'application/x-javascript',
+    'application/ecmascript',
+    'application/yaml',
+    'application/x-yaml',
+    'application/toml',
+    'application/x-sh',
+    'application/x-ndjson',
+    'application/sql'
+])
 
 const mimeOf = (contentType: string): string => contentType.split(';')[0].trim().toLowerCase()
 
@@ -25,8 +81,9 @@ const classify = (contentType: string): ContentKind => {
 
     if (mime === 'text/html' || mime === 'application/xhtml+xml') return ContentKind.Html
     if (mime === '' || mime.startsWith('text/')) return ContentKind.Text
-    if (mime === 'application/json' || mime.endsWith('+json')) return ContentKind.Text
-    if (mime === 'application/xml' || mime.endsWith('+xml')) return ContentKind.Text
+    if (mime.endsWith('+json') || mime.endsWith('+xml')) return ContentKind.Text
+    if (textMimes.has(mime)) return ContentKind.Text
+    if (mime === 'application/octet-stream') return ContentKind.Sniff
     return ContentKind.Unsupported
 }
 
@@ -38,11 +95,25 @@ const metaCharset = /<meta[^>]+charset=["']?([^;"'\s>]+)/i
 const charsetIn = (pattern: RegExp, source: string): Charset | undefined =>
     pattern.exec(source)?.[1] as Charset | undefined
 
+const utf8 = (bytes: Uint8Array): string | undefined => {
+    try {
+        return new TextDecoder('utf-8', {fatal: true}).decode(bytes)
+    } catch {
+        return undefined
+    }
+}
+
+// Undeclared non-UTF-8 text is nearly always Latin-1, which windows-1252 covers.
+const decodeUndeclared = (bytes: Uint8Array): string =>
+    utf8(bytes) ?? new TextDecoder('windows-1252').decode(bytes)
+
 const decode = (bytes: Uint8Array, charset: Charset | undefined): string => {
+    if (charset === undefined) return decodeUndeclared(bytes)
+
     try {
         return new TextDecoder(charset).decode(bytes)
     } catch {
-        return new TextDecoder().decode(bytes)
+        return decodeUndeclared(bytes)
     }
 }
 
@@ -56,20 +127,56 @@ const decodeBody = (bytes: Uint8Array, contentType: string, kind: ContentKind): 
     return declared === undefined ? body : decode(bytes, declared)
 }
 
-/** The one field read off the parsed document. Its DOM types are not in this tsconfig lib. */
-type ParsedDocument = {body: {innerHTML: string}}
+const looksLikeText = (bytes: Uint8Array): boolean =>
+    !bytes.includes(0) && utf8(bytes) !== undefined
 
-/** linkedom leaves `body` empty unless the markup has both `<html>` and `<body>`. */
-const asDocument = (html: string): string =>
-    /<html[\s>]/i.test(html) && /<body[\s>]/i.test(html) ?
-        html
-    :   `<html><body>${html}</body></html>`
+/** The fields read off the parsed document. Its DOM types are not in this tsconfig lib. */
+type ParsedElement = {textContent: string; remove(): void}
+type ParsedDocument = {
+    title: string
+    body: ParsedElement & {innerHTML: string; querySelectorAll(selector: string): ParsedElement[]}
+}
+
+const parse = (html: string): ParsedDocument => {
+    const {document} = parseHTML(html)
+    return document as unknown as ParsedDocument
+}
+
+const structureTags = /<\/?(html|head|body)[^>]*>/gi
+const wrap = (html: string): string => `<html><body>${html}</body></html>`
+
+// linkedom leaves `body` empty unless <html>, <head> and <body> appear in textbook order,
+// so anything else is flattened and wrapped again.
+const parseLenient = (html: string): ParsedDocument => {
+    const framed = /<html[\s>]/i.test(html) && /<body[\s>]/i.test(html)
+    const document = parse(framed ? html : wrap(html))
+
+    if (document.body.textContent.trim() !== '') return document
+    return parse(wrap(html.replace(structureTags, '')))
+}
+
+// A <title> outside <head> lands in the body, where it would read as prose.
+const takeTitle = (document: ParsedDocument): string => {
+    const stray = document.body.querySelectorAll('title')
+    const title = document.title || (stray[0]?.textContent ?? '')
+
+    for (const node of stray) node.remove()
+    return title.trim()
+}
+
+const mainContent = (document: ParsedDocument): string => {
+    if (!isProbablyReaderable(document as never)) return document.body.innerHTML
+    return new Readability(document as never).parse()?.content ?? document.body.innerHTML
+}
 
 const htmlToMarkdown = (html: string): string => {
-    const {document} = parseHTML(asDocument(html))
-    const article = new Readability(document).parse()
-    const content = article?.content ?? (document as unknown as ParsedDocument).body.innerHTML
-    return turndown.turndown(content).trim()
+    const document = parseLenient(html)
+    const title = takeTitle(document)
+    const markdown = turndown.turndown(mainContent(document)).trim()
+
+    return [title === '' ? '' : `Title: ${title}`, markdown]
+        .filter(part => part !== '')
+        .join('\n\n')
 }
 
 // MAGIC NUMBER: download cap. Claude Code WebFetch and mcp-fetch both stop at 10 MB.
@@ -95,16 +202,23 @@ const readBody = async (response: Response): Promise<Uint8Array> => {
     return Buffer.concat(chunks)
 }
 
+const unsupported = (contentType: string): Error =>
+    new Error(SubagentErrors.FetchFailed + `unsupported content type ${contentType}`)
+
 const digest = async (response: Response): Promise<string> => {
     const contentType = response.headers.get('content-type') ?? ''
     const kind = classify(contentType)
 
     if (kind === ContentKind.Unsupported) {
         await response.body?.cancel()
-        throw new Error(SubagentErrors.FetchFailed + `unsupported content type ${contentType}`)
+        throw unsupported(contentType)
     }
 
-    const body = decodeBody(await readBody(response), contentType, kind)
+    const bytes = await readBody(response)
+
+    if (kind === ContentKind.Sniff && !looksLikeText(bytes)) throw unsupported(contentType)
+
+    const body = decodeBody(bytes, contentType, kind)
     const text = kind === ContentKind.Html ? htmlToMarkdown(body) : body.trim()
 
     if (text === '') throw new Error(SubagentErrors.FetchFailed + 'page has no readable text')

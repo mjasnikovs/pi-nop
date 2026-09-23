@@ -89,6 +89,75 @@ describe('digest', () => {
         )
     })
 
+    test('leads with the page title', async () => {
+        const html = '<html><head><title> Quenlop v7 </title></head><body><p>hi</p></body></html>'
+        expect(await digest(response(html, 'text/html'))).toBe('Title: Quenlop v7\n\nhi')
+    })
+
+    test('keeps the h1 and sidebar of a page readability would not touch', async () => {
+        const html =
+            '<html><head><title>Manual</title></head><body><h1>Manual</h1>'
+            + '<aside><p>Requires: 3.10</p></aside></body></html>'
+        expect(await digest(response(html, 'text/html'))).toBe(
+            'Title: Manual\n\n# Manual\n\nRequires: 3.10'
+        )
+    })
+
+    test('reads a page whose markup skips the head tag', async () => {
+        const html =
+            '<!DOCTYPE html><html><meta charset="utf-8"><title>Spec</title><body><p>hi</p></body></html>'
+        expect(await digest(response(html, 'text/html'))).toBe('Title: Spec\n\nhi')
+    })
+
+    test('lifts a title that landed in the body out of the prose', async () => {
+        const html = '<TITLE>Old</TITLE><BODY><H1>Web</H1><P>hi</BODY>'
+        expect(await digest(response(html, 'text/html'))).toBe('Title: Old\n\n# Web\n\nhi')
+    })
+
+    test('fences a bare pre block without escaping it', async () => {
+        const html = '<pre>&gt;&gt;&gt; a == __b__</pre>'
+        expect(await digest(response(html, 'text/html'))).toBe('```\n>>> a == __b__\n```')
+    })
+
+    test('keeps form method, action and field names', async () => {
+        const html =
+            '<form method="POST" action="/order"><input name="size"><select name="qty"></select></form>'
+        expect(await digest(response(html, 'text/html'))).toBe(
+            'Form (method=post, action=/order)\n\n[input name="size"][select name="qty"]'
+        )
+        expect(
+            await digest(response('<form><textarea name="note"></textarea>Go</form>', 'text/html'))
+        ).toBe('Form (method=get, action=)\n\n[textarea name="note"]Go')
+        expect(await digest(response('<form></form><p>x</p>', 'text/html'))).toBe(
+            'Form (method=get, action=)\n\nx'
+        )
+    })
+
+    test('decodes undeclared latin-1 text as windows-1252', async () => {
+        const bytes = Uint8Array.from('caf\xe9', c => c.charCodeAt(0))
+        expect(await digest(response(bytes, 'text/plain'))).toBe('café')
+    })
+
+    test('falls back to windows-1252 when the declared charset is unknown', async () => {
+        const bytes = Uint8Array.from('caf\xe9', c => c.charCodeAt(0))
+        expect(await digest(response(bytes, 'text/plain; charset=nope'))).toBe('café')
+    })
+
+    test('passes source and config text types through', async () => {
+        expect(await digest(response('x=1', 'application/javascript'))).toBe('x=1')
+        expect(await digest(response('a: 1', 'application/x-yaml'))).toBe('a: 1')
+    })
+
+    test('sniffs an octet-stream body that is really text', async () => {
+        expect(await digest(response('token: 1', 'application/octet-stream'))).toBe('token: 1')
+        await expect(
+            digest(response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), 'application/octet-stream'))
+        ).rejects.toThrow('unsupported content type application/octet-stream')
+        await expect(
+            digest(response(new Uint8Array([0x61, 0x00]), 'application/octet-stream'))
+        ).rejects.toThrow('unsupported content type application/octet-stream')
+    })
+
     test('rejects a page with no readable text', async () => {
         const html = '<html><body><script>x()</script></body></html>'
         await expect(digest(response(html, 'text/html'))).rejects.toThrow(

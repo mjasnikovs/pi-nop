@@ -173,7 +173,7 @@ const digestCases: Case[] = [
     {
         name: 'form',
         prompt: ask('/form', "What are the form's method and action?"),
-        checks: run => [noError(run), answerHas(run, '/order'), answerHas(run, 'post')]
+        checks: run => [noError(run), answerHas(run, '/order'), answerMatches(run, /post/i)]
     }
 ]
 
