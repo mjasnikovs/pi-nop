@@ -176,4 +176,39 @@ describe('digest', () => {
             'Fetch failed: page has no readable text'
         )
     })
+
+    test('reads a page whose meta tag comes before the head', async () => {
+        const html =
+            '<html><meta charset="utf-8"><head><title>Site</title></head><body><p>hi</p></body></html>'
+        expect(await text(response(html, 'text/html'))).toBe('Title: Site\n\nhi')
+    })
+
+    test('drops mkdocs line anchors from code', async () => {
+        const html =
+            '<pre><code><a id="__codelineno-0-1" href="#__codelineno-0-1"></a>pip x\n'
+            + '<a id="__codelineno-0-2" href="#__codelineno-0-2"></a>serve</code></pre>'
+        expect(await text(response(html, 'text/html'))).toBe('```\npip x\nserve\n```')
+    })
+
+    test('keeps image alt and title text', async () => {
+        const html = '<p>Diagram:</p><img src="/d.png" alt="port 7788" title="Robert">'
+        expect(await text(response(html, 'text/html'))).toBe(
+            'Diagram:\n\n![port 7788](/d.png "Robert")'
+        )
+    })
+
+    test('keeps text hidden by inline style', async () => {
+        const html = '<p>a</p><div style="display:none">transcript</div>'
+        expect(await text(response(html, 'text/html'))).toBe('a\n\ntranscript')
+    })
+
+    test('reads xhtml as html', async () => {
+        const html = '<html><body><h1>X</h1><p>hi</p></body></html>'
+        expect(await text(response(html, 'application/xhtml+xml'))).toBe('# X\n\nhi')
+    })
+
+    test('drops noscript and template content', async () => {
+        const html = '<p>a</p><noscript>enable js</noscript><template><p>tpl</p></template>'
+        expect(await text(response(html, 'text/html'))).toBe('a')
+    })
 })

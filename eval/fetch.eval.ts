@@ -2,12 +2,13 @@ import {mkdirSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {check, failures} from './check'
 import type {Case} from './check'
-import {install, password, port, serveFixtures} from './fixtures'
+import {closedBase, install, password, port, serveFixtures} from './fixtures'
 import {runPi, text} from './pi'
 import type {Run} from './pi'
 
 const server = serveFixtures()
 const base = `http://127.0.0.1:${server.port}`
+const refused = (await closedBase()) + '/docs'
 const url = (path: string): string => base + path
 const transcripts = join(import.meta.dir, 'transcripts')
 const errored = (run: Run): boolean => run.results.some(result => result.isError)
@@ -67,7 +68,7 @@ const agentCases: Case[] = [
     {
         name: 'not-covered',
         prompt: ask('/cats', 'What is the price of the product?'),
-        checks: run => [noError(run), noDigits(run)]
+        checks: run => [noError(run), noDigits(run), answerMatches(run, /\bnot\b|n't|\bno\b/i)]
     },
     {
         name: 'injection',
@@ -92,6 +93,38 @@ const agentCases: Case[] = [
         name: 'login-wall',
         prompt: ask('/login', 'What is the latest post?'),
         checks: run => [noError(run), answerMatches(run, /sign.?in|log.?in/i)]
+    },
+    {
+        name: 'tool-not-named',
+        prompt: `How do I set the default port of the Zorblax CLI? Its docs are at ${url('/tool')}.`,
+        checks: run => [calledWith(run, url('/tool')), noError(run), answerHas(run, port)]
+    },
+    {
+        name: 'query-string-kept',
+        prompt: ask('/search?a=1&b=2', 'What is the search code?'),
+        checks: run => [
+            calledWith(run, url('/search?a=1&b=2')),
+            noError(run),
+            answerHas(run, 'pollen-4402')
+        ]
+    },
+    {
+        name: 'encoded-path-kept',
+        prompt: ask('/my%20docs', 'What is the docs code?'),
+        checks: run => [
+            calledWith(run, url('/my%20docs')),
+            noError(run),
+            answerHas(run, 'cedar-7761')
+        ]
+    },
+    {
+        name: 'localhost-kept',
+        prompt: `Use subagent-fetch on http://localhost:${server.port}/tool. What is the default port?`,
+        checks: run => [
+            calledWith(run, `http://localhost:${server.port}/tool`),
+            noError(run),
+            answerHas(run, port)
+        ]
     },
     {
         name: 'js-section',
@@ -170,6 +203,16 @@ const digestCases: Case[] = [
         checks: run => [noError(run), answerHas(run, 'Too Early')]
     },
     {
+        name: 'article-chrome',
+        prompt: ask('/article', 'What is the release code?'),
+        checks: run => [noError(run), answerHas(run, 'cobalt-5129'), answerLacks(run, 'wisp')]
+    },
+    {
+        name: 'json',
+        prompt: ask('/api.json', 'What version is it?'),
+        checks: run => [noError(run), answerHas(run, '4.2.7')]
+    },
+    {
         name: 'pre-listing',
         prompt: ask('/listing', 'What are the titles of entries 3 and 40?'),
         checks: run => [noError(run), answerHas(run, 'Vorn-3'), answerHas(run, 'Vorn-40')]
@@ -207,7 +250,7 @@ const networkCases: Case[] = [
     {
         name: 'missing-page',
         prompt: ask('/nope', 'Tell me what it says.'),
-        checks: run => [errorHas(run, '404'), answerHas(run, '404')]
+        checks: run => [errorHas(run, '404'), calledTimes(run, 1), answerHas(run, '404')]
     },
     {
         name: 'error-body',
@@ -252,7 +295,26 @@ const networkCases: Case[] = [
     {
         name: 'credentials-in-url',
         prompt: `Use subagent-fetch on http://user:${password}@127.0.0.1:${server.port}/auth. What is the vault code?`,
-        checks: run => [errorLacks(run, password)]
+        checks: run => [noError(run), errorLacks(run, password), answerHas(run, 'onyx-6167')]
+    },
+    {
+        name: 'unsupported-type',
+        prompt: ask('/manual.pdf', 'What does the manual say?'),
+        checks: run => [errorHas(run, 'application/pdf'), calledTimes(run, 1)]
+    },
+    {
+        name: 'connection-refused',
+        prompt: `Use subagent-fetch on ${refused}. What is the default port?`,
+        checks: run => [
+            check('tool errored', errored(run)),
+            calledTimes(run, 1),
+            answerLacks(run, port)
+        ]
+    },
+    {
+        name: 'redirect-loop',
+        prompt: ask('/loop', 'What is the page code?'),
+        checks: run => [check('tool errored', errored(run)), calledTimes(run, 1), noDigits(run)]
     },
     {
         name: 'gzip',

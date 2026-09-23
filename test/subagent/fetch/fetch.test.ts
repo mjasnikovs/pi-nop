@@ -305,6 +305,32 @@ describe('fetch tool', () => {
         expect(runSubagent.mock.calls[0][0]).toContain('here')
     })
 
+    test('resolves a refresh against the url the redirect landed on', async () => {
+        fetchMock.mockImplementationOnce(() =>
+            Promise.resolve(refresh('new', 'https://example.com/docs/old'))
+        )
+
+        await tool().execute('id', params, undefined, onUpdate, ctx)
+        expect(fetchMock.mock.calls[1][0]).toBe('https://example.com/docs/new')
+    })
+
+    test('reports the status of an error page it cannot read', async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response('png', {
+                    status: 500,
+                    statusText: 'Broken',
+                    headers: {'content-type': 'image/png'}
+                })
+            )
+        )
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Fetch failed: 500 Broken'
+        )
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
     test('reports the status of an error page too big for the model', async () => {
         fetchMock.mockImplementation(() =>
             Promise.resolve(

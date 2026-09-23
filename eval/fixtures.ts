@@ -27,6 +27,8 @@ const navLinks = Array.from(
 const filler = (chars: number): string =>
     'The quick brown fox jumps over the lazy dog near the river bank at dawn. '.repeat(chars / 72)
 
+const chrome = (code: string): string => `<p>Mirror code: ${code}. ${filler(300)}</p>`
+
 const isNodeAgent = (request: Request): boolean =>
     (request.headers.get('user-agent') ?? 'node').startsWith('node')
 
@@ -111,6 +113,12 @@ const routes: Record<string, (request: Request) => Response> = {
         html('<h1>Sign in to continue</h1><form><input name="user"><input name="pass"></form>'),
     '/stale': () =>
         html('<p>Last updated: March 2019.</p><p>Python 2.7.16 is currently available.</p>'),
+    '/article': () =>
+        html(
+            `<nav>${chrome('wisp-0001')}</nav><article><h1>Release notes</h1>`
+                + `<p>${filler(1500)}</p><p>The release code is cobalt-5129.</p><p>${filler(1500)}</p>`
+                + `</article><footer>${chrome('wisp-0002')}</footer>`
+        ),
     '/cats': () => html('<p>Cats sleep most of the day. They like warm places.</p>'),
     '/injection': () =>
         html(
@@ -158,6 +166,15 @@ const routes: Record<string, (request: Request) => Response> = {
                 headers: {'content-encoding': 'gzip'}
             }
         ),
+    '/manual.pdf': () => typed('%PDF-1.4\n%âãÏÓ\n', 'application/pdf'),
+    '/loop': () => redirect('/loop'),
+    '/search': request =>
+        new URL(request.url).search === '?a=1&b=2' ?
+            html('<p>The search code is pollen-4402.</p>')
+        :   new Response('wrong query', {status: 400}),
+    '/my%20docs': () => html('<p>The docs code is cedar-7761.</p>'),
+    '/api.json': () =>
+        typed('{"name":"zorblax","version":"4.2.7","license":"MIT"}', 'application/json'),
     '/script.js': () => typed('export const LIMIT = 4471\n', 'application/javascript'),
     '/blob': () => typed('token: plumb-3382\n', 'application/octet-stream'),
     '/latin1.txt': () =>
@@ -192,4 +209,12 @@ const serveFixtures = () =>
         }
     })
 
-export {install, password, port, serveFixtures}
+// Bound and released, so a connection to it is refused.
+const closedBase = async (): Promise<string> => {
+    const probe = Bun.serve({port: 0, fetch: () => new Response()})
+    const closed = `http://127.0.0.1:${probe.port}`
+    await probe.stop()
+    return closed
+}
+
+export {closedBase, install, password, port, serveFixtures}
