@@ -8,7 +8,7 @@ const answerPrompt = [
     'If the page states when it was written or updated, include that.',
     'EVIDENCE:',
     'one page line per line, the lines the answer rests on, copied exactly, character for character.',
-    'Nothing after EVIDENCE: when the page has nothing to cite.'
+    'At least one line when COVERED is yes or partial. Nothing when COVERED is no and there is nothing to cite.'
 ].join('\n')
 
 const coverages = ['yes', 'partial', 'no'] as const
@@ -26,24 +26,28 @@ const isCoverage = (value: string): value is Coverage =>
 const labelled = (line: string | undefined, label: string): string | undefined =>
     line?.startsWith(label) ? line.slice(label.length).trim() : undefined
 
+// Labels are found on trimmed lines, but the answer keeps its raw lines: blank lines and
+// indentation are part of a copied code block.
 const parseAnswer = (text: string): Answer | undefined => {
-    const lines = text.trim().split('\n')
-    const covered = labelled(lines[0], 'COVERED:')?.toLowerCase()
-    const first = labelled(lines[1], 'ANSWER:')
-    const divider = lines.indexOf('EVIDENCE:', 2)
+    const lines = text.replaceAll('\r\n', '\n').split('\n')
+    const trimmed = lines.map(line => line.trim())
+    const coveredAt = trimmed.findIndex(line => line !== '')
+    const answerAt = trimmed.findIndex((line, index) => index > coveredAt && line !== '')
+    const divider = trimmed.findIndex(
+        (line, index) => index > answerAt && line.startsWith('EVIDENCE:')
+    )
+    const covered = labelled(trimmed[coveredAt], 'COVERED:')?.toLowerCase()
+    const first = labelled(trimmed[answerAt], 'ANSWER:')
 
     if (covered === undefined || !isCoverage(covered)) return undefined
     if (first === undefined || divider === -1) return undefined
 
-    const answer = [first, ...lines.slice(2, divider)].join('\n').trim()
+    const answer = [first, ...lines.slice(answerAt + 1, divider)].join('\n').trim()
 
     if (answer === '') return undefined
 
-    const evidence = lines
-        .slice(divider + 1)
-        .map(line => line.trim())
-        .filter(line => line !== '')
-    return {covered, answer, evidence}
+    const evidence = [labelled(trimmed[divider], 'EVIDENCE:') ?? '', ...trimmed.slice(divider + 1)]
+    return {covered, answer, evidence: evidence.filter(line => line !== '')}
 }
 
 const squash = (text: string): string => text.replace(/\s+/g, ' ').trim()

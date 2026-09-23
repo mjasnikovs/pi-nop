@@ -36,6 +36,21 @@ describe('parseAnswer', () => {
         expect(parseAnswer(text)?.evidence).toEqual(['a', 'c'])
     })
 
+    test('takes evidence written on the label line', () => {
+        const text = 'COVERED: yes\nANSWER: x\nEVIDENCE: a\nb'
+        expect(parseAnswer(text)?.evidence).toEqual(['a', 'b'])
+    })
+
+    test('ignores trailing spaces, windows line ends and blank lines around labels', () => {
+        const text = 'COVERED: yes \r\n\r\nANSWER: x\r\n\r\nEVIDENCE: \r\na\r\n'
+        expect(parseAnswer(text)).toEqual({covered: 'yes', answer: 'x', evidence: ['a']})
+    })
+
+    test('keeps indentation inside the answer', () => {
+        const text = 'COVERED: yes\nANSWER:\nif x:\n    y()\nEVIDENCE:\na'
+        expect(parseAnswer(text)?.answer).toBe('if x:\n    y()')
+    })
+
     test('tolerates surrounding whitespace', () => {
         expect(parseAnswer('\n\nCOVERED: yes\nANSWER: x\nEVIDENCE:\na\n\n')?.answer).toBe('x')
     })

@@ -6,7 +6,7 @@ import type {SubagentOptions, SubagentUpdate} from '../../../src/subagent/subage
 
 type FetchTool = ToolDefinition<TObject<{url: TString; query: TString}>>
 
-const answer = 'COVERED: yes\nANSWER: answer\nEVIDENCE:'
+const answer = 'COVERED: no\nANSWER: answer\nEVIDENCE:'
 const details = {task: 'task', lastAssistantText: answer, elapsedMs: 1}
 const update = {content: [{type: 'text', text: 'partial'}], details}
 const runSubagent = mock((_task: string, _signal: unknown, onUpdate: SubagentUpdate) => {
@@ -92,6 +92,15 @@ describe('fetch tool', () => {
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
             'Subagent answer failed verification: not in the answer layout'
+        )
+    })
+
+    test('rejects a covered answer that cites nothing', async () => {
+        const text = 'COVERED: partial\nANSWER: The price is $49.\nEVIDENCE:'
+        runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Subagent answer failed verification: no evidence for a covered answer'
         )
     })
 

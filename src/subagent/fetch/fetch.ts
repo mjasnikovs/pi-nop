@@ -124,6 +124,8 @@ const verifyAnswer = (text: string, page: string): string => {
     const answer = parseAnswer(text)
 
     if (answer === undefined) throw new Error(SubagentErrors.BadAnswer + 'not in the answer layout')
+    if (answer.covered !== 'no' && answer.evidence.length === 0)
+        throw new Error(SubagentErrors.BadAnswer + 'no evidence for a covered answer')
 
     const invented = notOnPage(answer, page)
 
