@@ -136,6 +136,16 @@ const verifyAnswer = (text: string, page: string): string => {
     return text
 }
 
+// The status leads and the layout goes, or the caller reads "COVERED: yes" as a success.
+// Text not in the layout is dropped, as verifyAnswer would reject it.
+const describeFailure = (failure: string, text: string): string => {
+    const lead = SubagentErrors.FetchFailed + `${failure}. Report this status.`
+    const answer = parseAnswer(text)?.answer
+
+    if (answer === undefined) return lead
+    return `${lead} The error page adds:\n${answer}`
+}
+
 // An oversized error page still reports its status; the size is the lesser fact.
 const assertFits = (task: string, model: Model<Api> | undefined, failure?: string): void => {
     if (model === undefined) throw new Error(SubagentErrors.NoModel)
@@ -157,12 +167,14 @@ export default function (pi: ExtensionAPI) {
             + 'guessing from memory. Also use it to read any known URL without stuffing '
             + 'raw content into the main context. If the result says the page does not '
             + 'cover the query, report that as the answer; do not fill the gap from memory. '
-            + 'A failed fetch is final: do not retry the same URL.',
+            + 'A failed fetch is final: do not retry the same URL, and do not guess what '
+            + 'the page or server would have said.',
         parameters: Type.Object({
             url: Type.String({
                 description:
                     'URL to fetch. Must be http or https. Use the host exactly as given. '
-                    + 'Do not add or drop www.'
+                    + 'Do not add or drop www. A user:password@ prefix is fine: it is sent '
+                    + 'as basic auth and never shown.'
             }),
             query: Type.String({description: 'What to extract from the page.'})
         }),
@@ -171,18 +183,17 @@ export default function (pi: ExtensionAPI) {
         prepare: async (params, signal, configured) => {
             const options = {...configured, prompt: answerPrompt, tools: []}
             const page = await loadPage(params.url, signal)
+            const failure = page.failure
 
-            if (page.failure !== undefined && page.text === '')
-                throw new Error(SubagentErrors.FetchFailed + page.failure)
+            if (failure !== undefined && page.text === '')
+                throw new Error(SubagentErrors.FetchFailed + failure)
 
-            const task = buildTask(params.query, page.url, page.text, page.failure)
-            assertFits(task, options.model, page.failure)
-            return {
-                task,
-                options,
-                failure: page.failure,
-                verify: text => verifyAnswer(text, page.text)
-            }
+            const task = buildTask(params.query, page.url, page.text, failure)
+            assertFits(task, options.model, failure)
+            const verify = (text: string) => verifyAnswer(text, page.text)
+
+            if (failure === undefined) return {task, options, verify}
+            return {task, options, verify, failure: text => describeFailure(failure, text)}
         }
     })
 }

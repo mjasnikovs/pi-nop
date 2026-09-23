@@ -4,10 +4,10 @@ const answerPrompt = [
     'Reply in exactly this layout and nothing else. No code fence around it.',
     'COVERED: yes, partial or no. partial when the page answers only some of the query.',
     'ANSWER:',
-    'the answer, any length. When COVERED is partial or no, say what is missing.',
+    'the answer, any length. When COVERED is partial or no, say what is missing and what the page holds instead.',
     'If the page states when it was written or updated, include that.',
     'EVIDENCE:',
-    'one page line per line, the lines the answer rests on, copied exactly, character for character.',
+    'one page line per line, every line the answer rests on, copied exactly, character for character.',
     'At least one line when COVERED is yes or partial. Nothing when COVERED is no and there is nothing to cite.'
 ].join('\n')
 

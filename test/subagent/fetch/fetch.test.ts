@@ -223,10 +223,29 @@ describe('fetch tool', () => {
         )
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
-            'Fetch failed: 404 Not Found\n' + answer
+            'Fetch failed: 404 Not Found. Report this status. The error page adds:\nanswer'
         )
         expect(runSubagent.mock.calls[0][0]).toBe(
             '<query>what</query>\n<url>https://example.com/</url>\n<status>404 Not Found</status>\n<page>\nmoved to /v2\n</page>'
+        )
+    })
+
+    test('drops an error page answer that is not in the layout', async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response('moved to /v2', {
+                    status: 404,
+                    statusText: 'Not Found',
+                    headers: {'content-type': 'text/plain'}
+                })
+            )
+        )
+        runSubagent.mockImplementationOnce(() =>
+            Promise.resolve({text: '```\nCOVERED: yes\nANSWER: moved\nEVIDENCE:\n```', details})
+        )
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            /^Fetch failed: 404 Not Found\. Report this status\.$/
         )
     })
 
