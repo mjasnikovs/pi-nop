@@ -21,6 +21,6 @@
         "noEmit": true,
         "types": ["bun-types"]
     },
-    "include": ["src", "test"],
+    "include": ["src", "test", "eval"],
     "exclude": ["node_modules", "dist", "test/**/__fixtures__"]
 }

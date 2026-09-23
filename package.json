@@ -12,9 +12,10 @@
     "scripts": {
         "build": "rm -rf dist && tsc -p tsconfig.build.json",
         "test": "bun test",
-        "lint": "prettier --log-level warn --write '{src,test}/**/*.ts' && eslint --fix . && tsc --noEmit",
-        "lint:check": "prettier --check '{src,test}/**/*.ts' && eslint . --max-warnings 0 && tsc --noEmit",
-        "prepublishOnly": "bun run build"
+        "lint": "prettier --log-level warn --write '{src,test,eval}/**/*.ts' && eslint --fix . && tsc --noEmit",
+        "lint:check": "prettier --check '{src,test,eval}/**/*.ts' && eslint . --max-warnings 0 && tsc --noEmit",
+        "prepublishOnly": "bun run build",
+        "eval": "bun eval/fetch.eval.ts"
     },
     "dependencies": {
         "@mozilla/readability": "0.6.0",
