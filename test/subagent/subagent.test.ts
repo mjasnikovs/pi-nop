@@ -99,7 +99,8 @@ const reload = mock(() => onReload())
 const loaderOptions = mock((_options: unknown) => undefined)
 const createAgentSession = mock(() => Promise.resolve({session}))
 const sessionManager = {kind: 'in-memory'}
-const settingsManager = {kind: 'settings'}
+const applyOverrides = mock((_overrides: unknown) => undefined)
+const settingsManager = {kind: 'settings', applyOverrides}
 const inMemory = mock((_cwd: string) => sessionManager)
 const settingsCreate = mock((_cwd: string, _agentDir: string) => settingsManager)
 const actual = await import('@earendil-works/pi-coding-agent')
@@ -177,6 +178,7 @@ describe('runSubagent', () => {
         })
 
         expect(settingsCreate).toHaveBeenCalledWith('/opt/cwd', agentDir)
+        expect(applyOverrides).toHaveBeenCalledWith({compaction: {enabled: false}})
         expect(loaderOptions).toHaveBeenCalledTimes(1)
         expect(loaderOptions).toHaveBeenCalledWith({
             cwd: '/opt/cwd',
@@ -195,6 +197,7 @@ describe('runSubagent', () => {
         expect(createAgentSession).toHaveBeenCalledWith({
             cwd: '/opt/cwd',
             sessionManager,
+            settingsManager,
             resourceLoader: expect.any(Object),
             tools: [],
             thinkingLevel: 'high',
@@ -391,6 +394,19 @@ describe('runSubagent', () => {
         controller.abort()
 
         expect(session.abort).not.toHaveBeenCalled()
+        expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    test('aborts and throws when pi compacts the session', async () => {
+        session.onPrompt = () => {
+            session.emit({type: 'compaction_start'})
+            return Promise.resolve()
+        }
+
+        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+            'Subagent context was compacted'
+        )
+        expect(session.abort).toHaveBeenCalledTimes(1)
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
 
