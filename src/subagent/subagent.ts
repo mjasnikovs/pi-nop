@@ -201,7 +201,12 @@ type SubagentPrepare<T extends TObject> = (
     params: Static<T>,
     signal: AbortSignal | undefined,
     options: SubagentOptions
-) => Promise<{task: string; options: SubagentOptions}>
+) => Promise<{
+    task: string
+    options: SubagentOptions
+    /** When set, the run still happens but its answer is raised as this error. */
+    failure?: string
+}>
 
 type SubagentToolSpec<T extends TObject> = {
     name: string
@@ -219,9 +224,15 @@ const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: Subagen
         description: spec.description,
         parameters: spec.parameters,
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
-            const {task, options} = await spec.prepare(params, signal, configuredOptions(ctx))
+            const {task, options, failure} = await spec.prepare(
+                params,
+                signal,
+                configuredOptions(ctx)
+            )
             const {text, details} = await runSubagent(task, signal, onUpdate, options)
 
+            if (failure !== undefined)
+                throw new Error(SubagentErrors.FetchFailed + `${failure}\n${text}`)
             return {
                 content: [{type: 'text', text}],
                 details: {...details, task: spec.title(params) ?? task}

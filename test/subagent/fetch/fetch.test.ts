@@ -77,7 +77,7 @@ describe('fetch tool', () => {
     test('fetches the page and hands the digest to the subagent with no tools', async () => {
         const signal = new AbortController().signal
         const result = await tool().execute('id', params, signal, onUpdate, ctx)
-        expect(fetchMock).toHaveBeenCalledWith('https://example.com', {signal})
+        expect(fetchMock).toHaveBeenCalledWith('https://example.com/', {signal, headers: {}})
         expect(configuredOptions).toHaveBeenCalledWith(ctx)
         expect(runSubagent).toHaveBeenCalledWith(
             buildTask('what', 'https://example.com/final', 'page'),
@@ -162,7 +162,7 @@ describe('fetch tool', () => {
         expect(runSubagent).not.toHaveBeenCalled()
     })
 
-    test('throws on a non-ok response', async () => {
+    test('throws on a non-ok response with no readable body', async () => {
         fetchMock.mockImplementation(() =>
             Promise.resolve(new Response('', {status: 404, statusText: 'Not Found'}))
         )
@@ -171,6 +171,98 @@ describe('fetch tool', () => {
             'Fetch failed: 404 Not Found'
         )
         expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test('names the final url and Retry-After in the status', async () => {
+        fetchMock.mockImplementation(() => {
+            const response = new Response('', {
+                status: 429,
+                statusText: 'Too Many',
+                headers: {'retry-after': '120'}
+            })
+            Object.defineProperty(response, 'url', {value: 'https://example.com/elsewhere'})
+            return Promise.resolve(response)
+        })
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Fetch failed: 429 Too Many at https://example.com/elsewhere, Retry-After: 120'
+        )
+    })
+
+    test('runs the subagent over an error page and raises its answer as the error', async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response('moved to /v2', {
+                    status: 404,
+                    statusText: 'Not Found',
+                    headers: {'content-type': 'text/plain'}
+                })
+            )
+        )
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Fetch failed: 404 Not Found\nanswer'
+        )
+        expect(runSubagent.mock.calls[0][0]).toBe(
+            '<query>what</query>\n<url>https://example.com/</url>\n<status>404 Not Found</status>\n<page>\nmoved to /v2\n</page>'
+        )
+    })
+
+    test('turns url credentials into a basic auth header', async () => {
+        await tool().execute(
+            'id',
+            {...params, url: 'https://us%20er:p%40ss@example.com/x'},
+            undefined,
+            onUpdate,
+            ctx
+        )
+
+        expect(fetchMock).toHaveBeenCalledWith('https://example.com/x', {
+            signal: undefined,
+            headers: {authorization: 'Basic ' + Buffer.from('us er:p@ss').toString('base64')}
+        })
+    })
+
+    test('follows a meta refresh and stops on a loop', async () => {
+        const html = (body: string) => {
+            const response = new Response(body, {headers: {'content-type': 'text/html'}})
+            Object.defineProperty(response, 'url', {value: 'https://example.com/old'})
+            return response
+        }
+        fetchMock.mockImplementationOnce(() =>
+            Promise.resolve(
+                html(`<meta http-equiv="refresh" content="0; url=/new"><p>Redirecting</p>`)
+            )
+        )
+        fetchMock.mockImplementationOnce(() =>
+            Promise.resolve(page('landed', 'https://example.com/new'))
+        )
+        await tool().execute('id', params, undefined, onUpdate, ctx)
+        expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+            'https://example.com/',
+            'https://example.com/new'
+        ])
+        expect(runSubagent.mock.calls[0][0]).toContain('<url>https://example.com/new</url>')
+
+        fetchMock.mockClear()
+        runSubagent.mockClear()
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                html(`<meta http-equiv="refresh" content="0; url=/old"><p>Redirecting</p>`)
+            )
+        )
+        await tool().execute('id', params, undefined, onUpdate, ctx)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(runSubagent.mock.calls[0][0]).toContain('Redirecting')
+    })
+
+    test('counts non-ascii text as a token per character', async () => {
+        const chars = Math.ceil(model.contextWindow * taskShare) + 1
+        fetchMock.mockImplementation(() => Promise.resolve(page('日'.repeat(chars))))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            SubagentErrors.PageTooBig
+        )
     })
 
     test('surfaces the cause when fetch itself fails', async () => {

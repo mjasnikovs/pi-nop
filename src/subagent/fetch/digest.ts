@@ -131,10 +131,15 @@ const looksLikeText = (bytes: Uint8Array): boolean =>
     !bytes.includes(0) && utf8(bytes) !== undefined
 
 /** The fields read off the parsed document. Its DOM types are not in this tsconfig lib. */
-type ParsedElement = {textContent: string; remove(): void}
-type ParsedDocument = {
+type ParsedElement = {
+    textContent: string
+    remove(): void
+    getAttribute(name: string): string | null
+}
+type ParsedNode = {querySelectorAll(selector: string): ParsedElement[]}
+type ParsedDocument = ParsedNode & {
     title: string
-    body: ParsedElement & {innerHTML: string; querySelectorAll(selector: string): ParsedElement[]}
+    body: ParsedElement & ParsedNode & {innerHTML: string}
 }
 
 const parse = (html: string): ParsedDocument => {
@@ -164,19 +169,36 @@ const takeTitle = (document: ParsedDocument): string => {
     return title.trim()
 }
 
+const refreshUrl = /url\s*=\s*["']?([^"']+)/i
+
+const refreshTarget = (document: ParsedDocument): string | undefined => {
+    const meta = document
+        .querySelectorAll('meta')
+        .find(node => node.getAttribute('http-equiv')?.toLowerCase() === 'refresh')
+    return refreshUrl.exec(meta?.getAttribute('content') ?? '')?.[1].trim()
+}
+
 const mainContent = (document: ParsedDocument): string => {
     if (!isProbablyReaderable(document as never)) return document.body.innerHTML
     return new Readability(document as never).parse()?.content ?? document.body.innerHTML
 }
 
-const htmlToMarkdown = (html: string): string => {
+type Digest = {
+    text: string
+    /** Where a meta refresh sends the reader, as written in the page. */
+    refresh?: string
+}
+
+const htmlToMarkdown = (html: string): Digest => {
     const document = parseLenient(html)
+    const refresh = refreshTarget(document)
     const title = takeTitle(document)
     const markdown = turndown.turndown(mainContent(document)).trim()
-
-    return [title === '' ? '' : `Title: ${title}`, markdown]
+    const text = [title === '' ? '' : `Title: ${title}`, markdown]
         .filter(part => part !== '')
         .join('\n\n')
+
+    return refresh === undefined ? {text} : {text, refresh}
 }
 
 // MAGIC NUMBER: download cap. Claude Code WebFetch and mcp-fetch both stop at 10 MB.
@@ -205,7 +227,7 @@ const readBody = async (response: Response): Promise<Uint8Array> => {
 const unsupported = (contentType: string): Error =>
     new Error(SubagentErrors.FetchFailed + `unsupported content type ${contentType}`)
 
-const digest = async (response: Response): Promise<string> => {
+const digest = async (response: Response): Promise<Digest> => {
     const contentType = response.headers.get('content-type') ?? ''
     const kind = classify(contentType)
 
@@ -219,10 +241,11 @@ const digest = async (response: Response): Promise<string> => {
     if (kind === ContentKind.Sniff && !looksLikeText(bytes)) throw unsupported(contentType)
 
     const body = decodeBody(bytes, contentType, kind)
-    const text = kind === ContentKind.Html ? htmlToMarkdown(body) : body.trim()
+    const page = kind === ContentKind.Html ? htmlToMarkdown(body) : {text: body.trim()}
 
-    if (text === '') throw new Error(SubagentErrors.FetchFailed + 'page has no readable text')
-    return text
+    if (page.text === '') throw new Error(SubagentErrors.FetchFailed + 'page has no readable text')
+    return page
 }
 
 export {digest, maxBytes}
+export type {Digest}
