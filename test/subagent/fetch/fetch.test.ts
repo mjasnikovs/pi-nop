@@ -256,6 +256,72 @@ describe('fetch tool', () => {
         expect(runSubagent.mock.calls[0][0]).toContain('Redirecting')
     })
 
+    const refresh = (to: string, from = 'https://example.com/old'): Response => {
+        const response = new Response(`<meta http-equiv="refresh" content="0; url=${to}">here`, {
+            headers: {'content-type': 'text/html'}
+        })
+        Object.defineProperty(response, 'url', {value: from})
+        return response
+    }
+    test('drops url credentials when a refresh leaves the origin', async () => {
+        fetchMock.mockImplementationOnce(() => Promise.resolve(refresh('/same')))
+        fetchMock.mockImplementationOnce(() => Promise.resolve(refresh('https://other.test/')))
+        const auth = {authorization: 'Basic ' + Buffer.from('u:p').toString('base64')}
+        await tool().execute(
+            'id',
+            {...params, url: 'https://u:p@example.com/'},
+            undefined,
+            onUpdate,
+            ctx
+        )
+
+        expect(fetchMock.mock.calls.map(call => [call[0], call[1]?.headers])).toEqual([
+            ['https://example.com/', auth],
+            ['https://example.com/same', auth],
+            ['https://other.test/', {}]
+        ])
+    })
+
+    test('ignores a refresh it could not fetch and keeps the page', async () => {
+        for (const to of ['data:text/html,x', 'http://[bad', 'https://u:p@example.com/x']) {
+            fetchMock.mockImplementation(() => Promise.resolve(refresh(to)))
+            runSubagent.mockClear()
+
+            await tool().execute('id', params, undefined, onUpdate, ctx)
+            expect(runSubagent.mock.calls[0][0]).toContain('here')
+        }
+
+        expect(fetchMock.mock.calls.every(call => call[0].startsWith('https://example.com'))).toBe(
+            true
+        )
+    })
+
+    test('stops a refresh chain at the redirect cap', async () => {
+        let hop = 0
+        fetchMock.mockImplementation(() => Promise.resolve(refresh(`/hop${(hop += 1)}`)))
+
+        await tool().execute('id', params, undefined, onUpdate, ctx)
+        expect(fetchMock).toHaveBeenCalledTimes(21)
+        expect(runSubagent.mock.calls[0][0]).toContain('here')
+    })
+
+    test('reports the status of an error page too big for the model', async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response('x'.repeat(model.contextWindow * taskShare * 4), {
+                    status: 500,
+                    statusText: 'Broken',
+                    headers: {'content-type': 'text/plain'}
+                })
+            )
+        )
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Fetch failed: 500 Broken'
+        )
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
     test('counts non-ascii text as a token per character', async () => {
         const chars = Math.ceil(model.contextWindow * taskShare) + 1
         fetchMock.mockImplementation(() => Promise.resolve(page('日'.repeat(chars))))

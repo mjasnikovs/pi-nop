@@ -63,6 +63,25 @@ type Page = {
     failure?: string
 }
 
+// MAGIC NUMBER: the Fetch Standard fails a request at its twentieth redirect. A refresh
+// chain is followed like redirects, so it gets the same cap.
+const maxRefreshes = 20
+const origin = (url: string): string => new URL(url).origin
+
+// Like fetch on a redirect: credentials stay within their origin. A refresh that cannot
+// be fetched is ignored, as a browser would, and the current page stands.
+const refreshTarget = (page: Digest, from: Target, base: string): Target | undefined => {
+    if (page.refresh === undefined) return undefined
+
+    try {
+        const next = parseTarget(new URL(page.refresh, base).href)
+        if (origin(next.url) !== origin(from.url)) return next
+        return {...next, headers: {...from.headers, ...next.headers}}
+    } catch {
+        return undefined
+    }
+}
+
 // Meta refreshes are followed like redirects; a target seen before ends the chain.
 const loadPage = async (requested: string, signal: AbortSignal | undefined): Promise<Page> => {
     const seen = new Set<string>()
@@ -80,10 +99,10 @@ const loadPage = async (requested: string, signal: AbortSignal | undefined): Pro
 
         if (failure !== undefined) return {url, text: page.text, failure}
 
-        const next = page.refresh === undefined ? undefined : new URL(page.refresh, url).href
+        const next = seen.size > maxRefreshes ? undefined : refreshTarget(page, target, url)
 
-        if (next === undefined || seen.has(next)) return {url, text: page.text}
-        target = {...target, url: next}
+        if (next === undefined || seen.has(next.url)) return {url, text: page.text}
+        target = next
     }
 }
 
@@ -103,10 +122,12 @@ const estimateTaskTokens = (task: string): number => {
     return base + nonAscii - Math.floor(nonAscii / 4)
 }
 
-const assertFits = (task: string, model: Model<Api> | undefined): void => {
+// An oversized error page still reports its status; the size is the lesser fact.
+const assertFits = (task: string, model: Model<Api> | undefined, failure?: string): void => {
     if (model === undefined) throw new Error(SubagentErrors.NoModel)
-    if (estimateTaskTokens(task) > model.contextWindow * taskShare)
-        throw new Error(SubagentErrors.PageTooBig)
+    if (estimateTaskTokens(task) <= model.contextWindow * taskShare) return
+    if (failure === undefined) throw new Error(SubagentErrors.PageTooBig)
+    throw new Error(SubagentErrors.FetchFailed + failure)
 }
 
 export default function (pi: ExtensionAPI) {
@@ -141,7 +162,7 @@ export default function (pi: ExtensionAPI) {
                 throw new Error(SubagentErrors.FetchFailed + page.failure)
 
             const task = buildTask(params.query, page.url, page.text, page.failure)
-            assertFits(task, options.model)
+            assertFits(task, options.model, page.failure)
             return {task, options, failure: page.failure}
         }
     })
