@@ -15,8 +15,8 @@ import type {AgentToolUpdateCallback, ThinkingLevel} from '@earendil-works/pi-ag
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
 import {type Static, type TObject, Type} from 'typebox'
 
-import {findModel, loadConfig} from '../config/config'
-import type {NopConfig} from '../config/config'
+import {brokenConfig, findModel, loadConfig} from '../config/config'
+import type {NopConfig, NopTool} from '../config/config'
 import {renderCall, renderResult} from './subagentTui'
 
 enum SubagentErrors {
@@ -88,9 +88,6 @@ const defaultOptions = (cwd: string): SubagentOptions => ({
     tools: [SubagentTools.Read, SubagentTools.Grep, SubagentTools.Find, SubagentTools.Ls]
 })
 
-const brokenConfig =
-    'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
-
 const safeConfig = (ctx: ExtensionContext): NopConfig => {
     try {
         return loadConfig()
@@ -100,8 +97,8 @@ const safeConfig = (ctx: ExtensionContext): NopConfig => {
     }
 }
 
-const configuredOptions = (ctx: ExtensionContext): SubagentOptions => {
-    const config = safeConfig(ctx)
+const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOptions => {
+    const config = safeConfig(ctx)[tool] ?? {}
 
     return {
         ...defaultOptions(ctx.cwd),
@@ -230,7 +227,7 @@ type SubagentPrepare<T extends TObject> = (
 }>
 
 type SubagentToolSpec<T extends TObject> = {
-    name: string
+    name: NopTool
     label: string
     description: string
     parameters: T
@@ -248,7 +245,7 @@ const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: Subagen
             const {task, options, failure, verify} = await spec.prepare(
                 params,
                 signal,
-                configuredOptions(ctx)
+                configuredOptions(ctx, spec.name)
             )
             const {text, details} = await runSubagent(task, signal, onUpdate, options)
 

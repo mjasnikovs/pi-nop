@@ -514,7 +514,7 @@ describe('extension', () => {
     })
 
     test('runs with the saved thinking level and the host model by default', async () => {
-        saveConfig({thinkingLevel: 'high'})
+        saveConfig({subagent: {thinkingLevel: 'high'}})
 
         await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
 
@@ -524,7 +524,7 @@ describe('extension', () => {
     })
 
     test('resolves the saved model through the registry', async () => {
-        saveConfig({model: 'acme/fast', thinkingLevel: 'low'})
+        saveConfig({subagent: {model: 'acme/fast', thinkingLevel: 'low'}})
 
         await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
 
@@ -534,7 +534,7 @@ describe('extension', () => {
     })
 
     test('falls back to the host model when the saved one is unknown', async () => {
-        saveConfig({model: 'acme/gone', thinkingLevel: 'low'})
+        saveConfig({subagent: {model: 'acme/gone', thinkingLevel: 'low'}})
 
         await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
 
@@ -598,10 +598,48 @@ describe('extension', () => {
         expect(inMemory).toHaveBeenCalledWith('/fake/cwd')
     })
 
+    const named = (name: 'subagent' | 'subagent-fetch'): SubagentTool => {
+        registerTool.mockClear()
+        registerSubagentTool(pi, {
+            name,
+            label: 'Named',
+            description: 'd',
+            parameters: {type: 'object', properties: {task: {type: 'string'}}} as never,
+            title: () => undefined,
+            prepare: (params, _signal, options) =>
+                Promise.resolve({task: (params as {task: string}).task, options})
+        })
+        return registerTool.mock.calls[0][0] as SubagentTool
+    }
+    test('each tool reads only its own config entry', async () => {
+        saveConfig({'subagent-fetch': {model: 'acme/fast', thinkingLevel: 'low'}})
+
+        await named('subagent').execute('id', {task: 'task'}, undefined, undefined, ctx('/c'))
+        expect(createAgentSession).toHaveBeenLastCalledWith(
+            expect.objectContaining({thinkingLevel: 'xhigh', model: hostModel})
+        )
+
+        await named('subagent-fetch').execute('id', {task: 'task'}, undefined, undefined, ctx('/c'))
+        expect(createAgentSession).toHaveBeenLastCalledWith(
+            expect.objectContaining({thinkingLevel: 'low', model: registryModel})
+        )
+    })
+
+    test('the fetch tool warns on a broken config too', async () => {
+        writeFileSync(configPath, 'nope')
+
+        await named('subagent-fetch').execute('id', {task: 'task'}, undefined, undefined, ctx('/c'))
+
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining('config is broken'), 'warning')
+        expect(createAgentSession).toHaveBeenLastCalledWith(
+            expect.objectContaining({thinkingLevel: 'xhigh', model: hostModel})
+        )
+    })
+
     const verifying = (verify: (text: string) => string): SubagentTool => {
         registerTool.mockClear()
         registerSubagentTool(pi, {
-            name: 'checked',
+            name: 'subagent',
             label: 'Checked',
             description: 'd',
             parameters: {type: 'object', properties: {task: {type: 'string'}}} as never,

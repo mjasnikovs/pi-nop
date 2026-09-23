@@ -8,6 +8,7 @@ import {type Static, Type} from 'typebox'
 import Value from 'typebox/value'
 
 const configFile = 'pi-nop.json'
+const tools = ['subagent', 'subagent-fetch'] as const
 const thinkingLevels = [
     'off',
     'minimal',
@@ -17,11 +18,21 @@ const thinkingLevels = [
     'xhigh',
     'max'
 ] as const satisfies readonly ThinkingLevel[]
-const configSchema = Type.Object({
-    model: Type.Optional(Type.String()),
-    thinkingLevel: Type.Optional(Type.Enum(thinkingLevels))
+const toolSchema = Type.Object(
+    {
+        model: Type.Optional(Type.String()),
+        thinkingLevel: Type.Optional(Type.Enum(thinkingLevels))
+    },
+    {additionalProperties: false}
+)
+const configSchema = Type.Partial(Type.Record(Type.Enum(tools), toolSchema), {
+    additionalProperties: false
 })
+const brokenConfig =
+    'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
 
+type NopTool = (typeof tools)[number]
+type ToolConfig = Static<typeof toolSchema>
 type NopConfig = Static<typeof configSchema>
 
 const configPath = (): string => join(getAgentDir(), configFile)
@@ -41,5 +52,5 @@ const modelSpec = (model: Model<Api>): string => `${model.provider}/${model.id}`
 const findModel = (registry: ModelRegistry, spec?: string): Model<Api> | undefined =>
     registry.getAvailable().find(model => modelSpec(model) === spec)
 
-export {findModel, loadConfig, modelSpec, saveConfig, thinkingLevels}
-export type {NopConfig}
+export {brokenConfig, findModel, loadConfig, modelSpec, saveConfig, thinkingLevels, tools}
+export type {NopConfig, NopTool, ToolConfig}

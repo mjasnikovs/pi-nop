@@ -39,8 +39,14 @@ describe('config', () => {
         for (const raw of [
             'null',
             '"acme/fast"',
-            '{"model":1,"thinkingLevel":"high"}',
-            '{"thinkingLevel":"ultra"}'
+            '{"model":"acme/fast","thinkingLevel":"high"}',
+            '{"other":{"model":"acme/fast"}}',
+            '{"subagent":{"model":1,"thinkingLevel":"high"}}',
+            '{"subagent":{"thinkingLevel":"ultra"}}',
+            '{"subagent":{"tools":[]}}',
+            '[]',
+            '{"subagent":null}',
+            '{"subagent":[]}'
         ]) {
             writeFileSync(configPath, raw)
 
@@ -48,27 +54,41 @@ describe('config', () => {
         }
     })
 
-    test('accepts a partial file', () => {
-        writeFileSync(configPath, '{"model":"acme/fast"}')
+    test('accepts an empty object and an empty tool', () => {
+        writeFileSync(configPath, '{}')
+        expect(loadConfig()).toEqual({})
 
-        expect(loadConfig()).toEqual({model: 'acme/fast'})
+        writeFileSync(configPath, '{"subagent":{}}')
+        expect(loadConfig()).toEqual({subagent: {}})
+    })
+
+    test('saves an empty config as an empty object', () => {
+        saveConfig({})
+
+        expect(readFileSync(configPath, 'utf8')).toBe('{}\n')
+    })
+
+    test('accepts a partial file', () => {
+        writeFileSync(configPath, '{"subagent-fetch":{"model":"acme/fast"}}')
+
+        expect(loadConfig()).toEqual({'subagent-fetch': {model: 'acme/fast'}})
     })
 
     test('creates the agent dir when saving', () => {
         rmSync(agentDir, {recursive: true, force: true})
 
-        saveConfig({thinkingLevel: 'low'})
+        saveConfig({subagent: {thinkingLevel: 'low'}})
 
-        expect(loadConfig()).toEqual({thinkingLevel: 'low'})
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'low'}})
     })
 
     test('saves pretty JSON and loads it back', () => {
-        saveConfig({model: 'acme/fast', thinkingLevel: 'high'})
+        saveConfig({subagent: {model: 'acme/fast', thinkingLevel: 'high'}})
 
         expect(readFileSync(configPath, 'utf8')).toBe(
-            '{\n  "model": "acme/fast",\n  "thinkingLevel": "high"\n}\n'
+            '{\n  "subagent": {\n    "model": "acme/fast",\n    "thinkingLevel": "high"\n  }\n}\n'
         )
-        expect(loadConfig()).toEqual({model: 'acme/fast', thinkingLevel: 'high'})
+        expect(loadConfig()).toEqual({subagent: {model: 'acme/fast', thinkingLevel: 'high'}})
     })
 
     test('lists every thinking level', () => {
