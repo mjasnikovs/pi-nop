@@ -4,12 +4,9 @@ import type {Api, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
 import {registerSubagentTool, SubagentErrors} from '../subagent'
+import {answerPrompt, notOnPage, parseAnswer} from './answer'
 import {digest} from './digest'
 import type {Digest} from './digest'
-
-const extractionPrompt =
-    'Answer the query using only the page text. Say if the page does not cover it. '
-    + 'If the page states when it was written or updated, include that.'
 
 // MAGIC NUMBER: share of the context window the task may take. The rest is headroom for
 // the system prompt, the answer and the rough 4 chars per token estimate pi uses.
@@ -122,6 +119,21 @@ const estimateTaskTokens = (task: string): number => {
     return base + nonAscii - Math.floor(nonAscii / 4)
 }
 
+// The layout is returned as is, so the caller sees the coverage and the evidence too.
+const verifyAnswer = (text: string, page: string): string => {
+    const answer = parseAnswer(text)
+
+    if (answer === undefined) throw new Error(SubagentErrors.BadAnswer + 'not in the answer layout')
+
+    const invented = notOnPage(answer, page)
+
+    if (invented.length > 0)
+        throw new Error(
+            SubagentErrors.BadAnswer + 'evidence not on the page: ' + invented.join(' | ')
+        )
+    return text
+}
+
 // An oversized error page still reports its status; the size is the lesser fact.
 const assertFits = (task: string, model: Model<Api> | undefined, failure?: string): void => {
     if (model === undefined) throw new Error(SubagentErrors.NoModel)
@@ -155,7 +167,7 @@ export default function (pi: ExtensionAPI) {
         // Pi renders while the call is still streaming, so either field may be missing.
         title: args => [args?.query, args?.url].filter(part => part !== undefined).join(' '),
         prepare: async (params, signal, configured) => {
-            const options = {...configured, prompt: extractionPrompt, tools: []}
+            const options = {...configured, prompt: answerPrompt, tools: []}
             const page = await loadPage(params.url, signal)
 
             if (page.failure !== undefined && page.text === '')
@@ -163,9 +175,14 @@ export default function (pi: ExtensionAPI) {
 
             const task = buildTask(params.query, page.url, page.text, page.failure)
             assertFits(task, options.model, page.failure)
-            return {task, options, failure: page.failure}
+            return {
+                task,
+                options,
+                failure: page.failure,
+                verify: text => verifyAnswer(text, page.text)
+            }
         }
     })
 }
 
-export {buildTask, extractionPrompt, taskShare}
+export {buildTask, taskShare, verifyAnswer}

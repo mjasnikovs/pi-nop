@@ -6,11 +6,12 @@ import type {SubagentOptions, SubagentUpdate} from '../../../src/subagent/subage
 
 type FetchTool = ToolDefinition<TObject<{url: TString; query: TString}>>
 
-const details = {task: 'task', lastAssistantText: 'answer', elapsedMs: 1}
+const answer = 'COVERED: yes\nANSWER: answer\nEVIDENCE:'
+const details = {task: 'task', lastAssistantText: answer, elapsedMs: 1}
 const update = {content: [{type: 'text', text: 'partial'}], details}
 const runSubagent = mock((_task: string, _signal: unknown, onUpdate: SubagentUpdate) => {
     onUpdate?.(update as Parameters<NonNullable<SubagentUpdate>>[0])
-    return Promise.resolve({text: 'answer', details})
+    return Promise.resolve({text: answer, details})
 })
 const model = {contextWindow: 1000} as Model<Api>
 const options = {
@@ -41,13 +42,8 @@ afterAll(() => {
     mock.restore()
 })
 
-const {
-    buildTask,
-    extractionPrompt,
-    taskShare,
-    default: register
-} = await import('../../../src/subagent/fetch/fetch')
-
+const {answerPrompt} = await import('../../../src/subagent/fetch/answer')
+const {buildTask, taskShare, default: register} = await import('../../../src/subagent/fetch/fetch')
 const registerTool = mock((_tool: FetchTool) => undefined)
 const pi = {registerTool} as unknown as ExtensionAPI
 const ctx = {cwd: '/cwd'} as unknown as ExtensionContext
@@ -83,12 +79,29 @@ describe('fetch tool', () => {
             buildTask('what', 'https://example.com/final', 'page'),
             signal,
             onUpdate,
-            {...options, prompt: extractionPrompt, tools: []}
+            {...options, prompt: answerPrompt, tools: []}
         )
         expect(result).toEqual({
-            content: [{type: 'text', text: 'answer'}],
+            content: [{type: 'text', text: answer}],
             details: {...details, task: 'what https://example.com'}
         })
+    })
+
+    test('rejects an answer that is not in the layout', async () => {
+        runSubagent.mockImplementationOnce(() => Promise.resolve({text: 'The port is 1.', details}))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Subagent answer failed verification: not in the answer layout'
+        )
+    })
+
+    test('rejects evidence the page does not hold', async () => {
+        const text = 'COVERED: yes\nANSWER: x\nEVIDENCE:\npage\nmade up\nalso fake'
+        runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'Subagent answer failed verification: evidence not on the page: made up | also fake'
+        )
     })
 
     test('renders through the shared subagent TUI', () => {
@@ -201,7 +214,7 @@ describe('fetch tool', () => {
         )
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
-            'Fetch failed: 404 Not Found\nanswer'
+            'Fetch failed: 404 Not Found\n' + answer
         )
         expect(runSubagent.mock.calls[0][0]).toBe(
             '<query>what</query>\n<url>https://example.com/</url>\n<status>404 Not Found</status>\n<page>\nmoved to /v2\n</page>'
