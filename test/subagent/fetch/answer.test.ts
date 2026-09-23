@@ -31,9 +31,9 @@ describe('parseAnswer', () => {
         })
     })
 
-    test('strips a quote prefix and blank lines from evidence', () => {
-        const text = 'COVERED: yes\nANSWER: x\nEVIDENCE:\n> a\n>b\n\n  c  \n'
-        expect(parseAnswer(text)?.evidence).toEqual(['a', 'b', 'c'])
+    test('trims evidence lines and drops blank ones', () => {
+        const text = 'COVERED: yes\nANSWER: x\nEVIDENCE:\na\n\n  c  \n'
+        expect(parseAnswer(text)?.evidence).toEqual(['a', 'c'])
     })
 
     test('tolerates surrounding whitespace', () => {

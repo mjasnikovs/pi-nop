@@ -26,12 +26,6 @@ const isCoverage = (value: string): value is Coverage =>
 const labelled = (line: string | undefined, label: string): string | undefined =>
     line?.startsWith(label) ? line.slice(label.length).trim() : undefined
 
-// Models tend to quote evidence markdown-style; the prefix carries no meaning.
-const unquoted = (line: string): string => {
-    const trimmed = line.trim()
-    return trimmed.startsWith('>') ? trimmed.slice(1).trim() : trimmed
-}
-
 const parseAnswer = (text: string): Answer | undefined => {
     const lines = text.trim().split('\n')
     const covered = labelled(lines[0], 'COVERED:')?.toLowerCase()
@@ -47,7 +41,7 @@ const parseAnswer = (text: string): Answer | undefined => {
 
     const evidence = lines
         .slice(divider + 1)
-        .map(unquoted)
+        .map(line => line.trim())
         .filter(line => line !== '')
     return {covered, answer, evidence}
 }
