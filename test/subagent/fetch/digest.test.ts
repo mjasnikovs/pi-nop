@@ -190,6 +190,23 @@ describe('digest', () => {
         expect(await text(response(html, 'text/html'))).toBe('```\npip x\nserve\n```')
     })
 
+    test('keeps code lines marked by tags on their own lines', async () => {
+        const page = async (code: string) =>
+            text(response(`<pre><code class="language-js">${code}</code></pre>`, 'text/html'))
+        const want = '```js\na = 1\nb = 2\n```'
+        expect(await page('<div>a = 1</div><div>b = 2</div>')).toBe(want)
+        expect(await page('a = 1<br>b = 2')).toBe(want)
+        expect(await page('<p>a = 1</p><p>b = 2</p>')).toBe(want)
+        expect(await page('<table><tr><td>a = 1</td></tr><tr><td>b = 2</td></tr></table>')).toBe(
+            want
+        )
+        expect(await page('<div><div>a = 1</div></div><div>b = 2</div>')).toBe(want)
+        expect(await page('a = 1<div>b = 2</div>')).toBe(want)
+        expect(await page('<span class="line">a = 1</span>\n<span class="line">b = 2</span>')).toBe(
+            want
+        )
+    })
+
     test('keeps image alt and title text', async () => {
         const html = '<p>Diagram:</p><img src="/d.png" alt="port 7788" title="Robert">'
         expect(await text(response(html, 'text/html'))).toBe(

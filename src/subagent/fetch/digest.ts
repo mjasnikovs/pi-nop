@@ -131,15 +131,101 @@ const looksLikeText = (bytes: Uint8Array): boolean =>
     !bytes.includes(0) && utf8(bytes) !== undefined
 
 /** The fields read off the parsed document. Its DOM types are not in this tsconfig lib. */
-type ParsedElement = {
+type ParsedChild = {
+    nodeName: string
+    nodeType: number
+    nodeValue: string | null
+    childNodes: ParsedChild[]
+    firstChild: ParsedChild | null
+}
+type ParsedElement = ParsedChild & {
     textContent: string
     remove(): void
     getAttribute(name: string): string | null
+    replaceChildren(...nodes: ParsedChild[]): void
 }
 type ParsedNode = {querySelectorAll(selector: string): ParsedElement[]}
 type ParsedDocument = ParsedNode & {
     title: string
     body: ParsedElement & ParsedNode & {innerHTML: string}
+    createTextNode(text: string): ParsedChild
+}
+
+const textNode = 3
+// Tags whose default display is not inline, per the HTML standard. innerText breaks the
+// line around these, and textContent does not.
+const lineTags = new Set([
+    'ADDRESS',
+    'ARTICLE',
+    'ASIDE',
+    'BLOCKQUOTE',
+    'CAPTION',
+    'DD',
+    'DETAILS',
+    'DIV',
+    'DL',
+    'DT',
+    'FIELDSET',
+    'FIGCAPTION',
+    'FIGURE',
+    'FOOTER',
+    'FORM',
+    'H1',
+    'H2',
+    'H3',
+    'H4',
+    'H5',
+    'H6',
+    'HEADER',
+    'HR',
+    'LI',
+    'MAIN',
+    'NAV',
+    'OL',
+    'P',
+    'PRE',
+    'SECTION',
+    'SUMMARY',
+    'TABLE',
+    'TBODY',
+    'TFOOT',
+    'THEAD',
+    'TR',
+    'UL'
+])
+
+const endLine = (text: string): string => (text === '' || text.endsWith('\n') ? text : text + '\n')
+
+// A structural break is folded into a newline the text already carries.
+const codeText = (node: ParsedChild): string => {
+    let text = ''
+    let broke = false
+
+    for (const child of node.childNodes) {
+        if (child.nodeType === textNode) {
+            const value = child.nodeValue ?? ''
+            text += broke && value.startsWith('\n') ? value.slice(1) : value
+            broke = false
+        } else if (child.nodeName === 'BR') {
+            text += '\n'
+            broke = false
+        } else if (lineTags.has(child.nodeName)) {
+            text = endLine(endLine(text) + codeText(child))
+            broke = true
+        } else {
+            text += codeText(child)
+        }
+    }
+
+    return text
+}
+
+// Highlighters mark code lines with tags, and turndown reads the block's textContent.
+// The <code> child stays, so turndown still sees its language class.
+const flattenCode = (document: ParsedDocument): void => {
+    for (const block of document.body.querySelectorAll('pre, pre > code'))
+        if (block.nodeName === 'CODE' || block.firstChild?.nodeName !== 'CODE')
+            block.replaceChildren(document.createTextNode(codeText(block).replace(/\n$/, '')))
 }
 
 const parse = (html: string): ParsedDocument => {
@@ -191,6 +277,7 @@ type Digest = {
 
 const htmlToMarkdown = (html: string): Digest => {
     const document = parseLenient(html)
+    flattenCode(document)
     const refresh = refreshTarget(document)
     const title = takeTitle(document)
     const markdown = turndown.turndown(mainContent(document)).trim()
