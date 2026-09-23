@@ -128,6 +128,7 @@ afterAll(() => {
 
 const {
     progressThrottleMs,
+    registerSubagentTool,
     runSubagent,
     default: register
 } = await import('../../src/subagent/subagent')
@@ -393,7 +394,16 @@ describe('runSubagent', () => {
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
 
-    test.each<StopReason>(['length', 'toolUse', 'pending', 'deferred'])(
+    test('throws when the model ran out of output', async () => {
+        session.messages = [assistant({stopReason: 'length'})]
+
+        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+            'Subagent output cut off at the model output limit'
+        )
+        expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    test.each<StopReason>(['toolUse', 'pending', 'deferred'])(
         'returns the text when the stop reason is %s',
         async stopReason => {
             session.messages = [assistant({stopReason})]
@@ -570,6 +580,34 @@ describe('extension', () => {
             expect.objectContaining({cwd: '/fake/cwd', tools: ['read', 'grep', 'find', 'ls']})
         )
         expect(inMemory).toHaveBeenCalledWith('/fake/cwd')
+    })
+
+    const verifying = (verify: (text: string) => string): SubagentTool => {
+        registerTool.mockClear()
+        registerSubagentTool(pi, {
+            name: 'checked',
+            label: 'Checked',
+            description: 'd',
+            parameters: {type: 'object', properties: {task: {type: 'string'}}} as never,
+            title: () => undefined,
+            prepare: (params, _signal, options) =>
+                Promise.resolve({task: (params as {task: string}).task, options, verify})
+        })
+        return registerTool.mock.calls[0][0] as SubagentTool
+    }
+    test('returns what verify makes of the answer', async () => {
+        const tool = verifying(text => text.toUpperCase())
+        const result = await tool.execute('id', {task: 'task'}, undefined, undefined, ctx('/c'))
+        expect(result.content).toEqual([{type: 'text', text: 'HELLO'}])
+    })
+
+    test('fails the call when verify rejects the answer', async () => {
+        const tool = verifying(() => {
+            throw new Error('bad answer')
+        })
+        await expect(
+            tool.execute('id', {task: 'task'}, undefined, undefined, ctx('/c'))
+        ).rejects.toThrow('bad answer')
     })
 
     test('passes the signal through so the run can be aborted', async () => {

@@ -25,6 +25,8 @@ enum SubagentErrors {
     RunFailed = 'Subagent run failed: ',
     FetchFailed = 'Fetch failed: ',
     NoModel = 'No model selected',
+    Truncated = 'Subagent output cut off at the model output limit',
+    BadAnswer = 'Subagent answer failed verification: ',
     PageTooBig = 'Page too big for the subagent model context window'
 }
 
@@ -183,6 +185,7 @@ const runSubagent = async (
 
         if (stopReason === 'error' || stopReason === 'aborted')
             throw new Error(SubagentErrors.RunFailed + (errorMessage ?? stopReason))
+        if (stopReason === 'length') throw new Error(SubagentErrors.Truncated)
 
         const text = session.getLastAssistantText()
 
@@ -206,6 +209,8 @@ type SubagentPrepare<T extends TObject> = (
     options: SubagentOptions
     /** When set, the run still happens but its answer is raised as this error. */
     failure?: string
+    /** Checks the answer and returns what the caller gets; throws to reject it. */
+    verify?: (text: string) => string
 }>
 
 type SubagentToolSpec<T extends TObject> = {
@@ -224,7 +229,7 @@ const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: Subagen
         description: spec.description,
         parameters: spec.parameters,
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
-            const {task, options, failure} = await spec.prepare(
+            const {task, options, failure, verify} = await spec.prepare(
                 params,
                 signal,
                 configuredOptions(ctx)
@@ -234,7 +239,7 @@ const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: Subagen
             if (failure !== undefined)
                 throw new Error(SubagentErrors.FetchFailed + `${failure}\n${text}`)
             return {
-                content: [{type: 'text', text}],
+                content: [{type: 'text', text: verify === undefined ? text : verify(text)}],
                 details: {...details, task: spec.title(params) ?? task}
             }
         },
