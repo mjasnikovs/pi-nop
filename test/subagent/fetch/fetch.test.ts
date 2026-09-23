@@ -114,6 +114,24 @@ describe('fetch tool', () => {
         expect(out).toContain('what https://example.com')
     })
 
+    test('titles the result row with query and url', () => {
+        const {renderResult} = tool()
+        const render = {args: params, state: {}, invalidate: () => undefined, isError: false}
+        const theme = {fg: (_c: string, text: string) => text, bold: (text: string) => text}
+        const result = {content: [{type: 'text', text: 'answer'}], details}
+        const out =
+            renderResult?.(
+                result as never,
+                {expanded: false} as never,
+                theme as never,
+                render as never
+            )
+                ?.render(80)
+                .join('\n') ?? ''
+        expect(out).toContain('subagent-fetch')
+        expect(out).toContain('what https://example.com')
+    })
+
     test('forwards progress to onUpdate', async () => {
         await tool().execute('id', params, undefined, onUpdate, ctx)
 
