@@ -11,11 +11,13 @@ import {Container, Markdown, Spacer, Text, truncateToWidth} from '@earendil-work
 
 import type {SubagentDetails} from './subagent'
 
-type SubagentPhase = 'running' | 'done' | 'error'
+type SubagentPhase = 'queued' | 'running' | 'done' | 'error'
 
 type SubagentToolResult = AgentToolResult<SubagentDetails | undefined>
 
 const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const queued = 'queued…'
+const clockIcon = '◷'
 const spinnerIntervalMs = 100
 const idleTicks = 20
 const barWidth = 10
@@ -160,6 +162,7 @@ const formatContext = (details: SubagentDetails | undefined): {bar: string; labe
 }
 
 const statusIcon = (theme: Theme, phase: SubagentPhase, frame: number): string => {
+    if (phase === 'queued') return theme.fg('muted', clockIcon)
     if (phase === 'running') return theme.fg('accent', spinnerFrames[frame])
     if (phase === 'error') return theme.fg('error', '✗')
     return theme.fg('success', '✓')
@@ -183,8 +186,12 @@ const statusMessage = (
         oneLine(fallbackMessage) || oneLine(details?.lastAssistantText) || 'failed'
     :   oneLine(details?.lastAssistantText) || oneLine(fallbackMessage) || 'starting…'
 
-const phaseFor = (options: ToolRenderResultOptions, isError: boolean): SubagentPhase => {
-    if (options.isPartial) return 'running'
+const phaseFor = (
+    options: ToolRenderResultOptions,
+    isError: boolean,
+    text: string
+): SubagentPhase => {
+    if (options.isPartial) return text === queued ? 'queued' : 'running'
     if (isError) return 'error'
     return 'done'
 }
@@ -265,8 +272,10 @@ const renderResult = (
                 result.details.lastAssistantText || (ctx.state.details?.lastAssistantText ?? '')
         }
 
-    const phase = phaseFor(options, ctx.isError)
     const text = firstText(result)
+    const phase = phaseFor(options, ctx.isError, text)
+    // Waiting for a slot is not run time, so the clock restarts once the run begins.
+    if (phase === 'queued') rows.startedAt = undefined
     rows.setRunning(phase === 'running')
     rows.setRows(
         buildRows(
@@ -299,7 +308,9 @@ const renderResult = (
 
 export {
     CallSlot,
+    clockIcon,
     idleTicks,
+    queued,
     renderCall,
     renderResult,
     spinnerFrames,

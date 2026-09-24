@@ -33,11 +33,15 @@ const searchSchema = Type.Object(
     {additionalProperties: false}
 )
 const searchTool = 'web-search'
+const concurrencyLevels = [1, 2, 3, 4] as const
+const concurrencySchema = Type.Enum(concurrencyLevels)
+const concurrencyKey = 'concurrency'
 const configSchema = Type.Object(
     {
         subagent: Type.Optional(toolSchema),
         'subagent-fetch': Type.Optional(toolSchema),
-        [searchTool]: Type.Optional(searchSchema)
+        [searchTool]: Type.Optional(searchSchema),
+        [concurrencyKey]: Type.Optional(concurrencySchema)
     },
     {additionalProperties: false}
 )
@@ -69,6 +73,9 @@ const findModel = (registry: ModelRegistry, spec?: string): Model<Api> | undefin
 
 export {
     brokenConfig,
+    concurrencyKey,
+    concurrencyLevels,
+    concurrencySchema,
     defaultEngine,
     engines,
     engineSchema,

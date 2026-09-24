@@ -9,6 +9,9 @@ import Value from 'typebox/value'
 import {boxed} from './box'
 import {
     brokenConfig,
+    concurrencyKey,
+    concurrencyLevels,
+    concurrencySchema,
     defaultEngine,
     engines,
     loadConfig,
@@ -23,6 +26,7 @@ import {gap, header, settable, skipInert} from './sections'
 import type {NopConfig, NopTool, ToolConfig} from './config'
 
 const inherit = 'inherit'
+const unlimited = 'unlimited'
 const maxVisible = 10
 // Two levels up from both src/config and dist/config, so the built package reads the same file.
 const packageJson = new URL('../../package.json', import.meta.url)
@@ -33,6 +37,7 @@ type Field = keyof ToolConfig
 
 const rowId = (tool: NopTool, field: Field): string => `${tool}.${field}`
 const engineRow = `${searchTool}.engine`
+const concurrencyRow = concurrencyKey
 
 const parseRowId = (id: string): [NopTool, Field] => {
     const [tool, field] = id.split('.') as [NopTool, Field]
@@ -80,6 +85,14 @@ const panelItems = (config: NopConfig, models: string[], paint = same): SettingI
         label: 'engine',
         currentValue: config[searchTool]?.engine ?? defaultEngine,
         values: [...engines]
+    },
+    gap(concurrencyKey),
+    header(concurrencyKey, paint),
+    {
+        id: concurrencyRow,
+        label: 'subagents at once',
+        currentValue: String(config[concurrencyKey] ?? unlimited),
+        values: [unlimited, ...concurrencyLevels.map(String)]
     }
 ]
 
@@ -91,6 +104,12 @@ const withTool = (config: NopConfig, tool: NopTool, entry: ToolConfig): NopConfi
 const applyChange = (config: NopConfig, id: string, value: string): NopConfig => {
     if (id === engineRow)
         return {...config, [searchTool]: Value.Parse(searchSchema, {engine: value})}
+
+    if (id === concurrencyRow) {
+        const {[concurrencyKey]: _dropped, ...rest} = config
+        if (value === unlimited) return rest
+        return {...rest, [concurrencyKey]: Value.Parse(concurrencySchema, Number(value))}
+    }
 
     const [tool, field] = parseRowId(id)
     const {[field]: _dropped, ...entry} = config[tool] ?? {}
@@ -132,7 +151,8 @@ const openConfig = (ctx: ExtensionCommandContext): NopConfig => {
 export default function (pi: ExtensionAPI) {
     pi.registerCommand('nop-config', {
         description:
-            'Choose the model and thinking level for each subagent tool, and the web search engine',
+            'Choose the model and thinking level for each subagent tool, the web search engine, '
+            + 'and how many subagents run at once',
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)

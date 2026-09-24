@@ -118,9 +118,14 @@ describe('panelItems', () => {
             ['subagent-fetch.thinkingLevel', 'thinking', 'high'],
             ['gap:web-search', '', ''],
             ['header:web-search', '<WEB-SEARCH>', ''],
-            ['web-search.engine', 'engine', 'exa']
+            ['web-search.engine', 'engine', 'exa'],
+            ['gap:concurrency', '', ''],
+            ['header:concurrency', '<CONCURRENCY>', ''],
+            ['concurrency', 'subagents at once', 'unlimited']
         ])
         expect(items[9]?.values).toEqual(['exa', 'brave', 'ddg'])
+        expect(items[12]?.values).toEqual(['unlimited', '1', '2', '3', '4'])
+        expect(panelItems({concurrency: 3}, models)[12]?.currentValue).toBe('3')
         expect(panelItems({'web-search': {engine: 'ddg'}}, models)[9]?.currentValue).toBe('ddg')
         expect(panelItems({}, models)[0]?.label).toBe('SUBAGENT')
         expect(items[2]?.values).toEqual([
@@ -204,6 +209,14 @@ describe('applyChange', () => {
         expect(() => applyChange(config, 'web-search.engine', 'bing')).toThrow('Parse')
     })
 
+    test('sets the concurrency and unlimited drops it', () => {
+        const config = {subagent: {model: 'acme/fast'}} as const
+        expect(applyChange(config, 'concurrency', '2')).toEqual({...config, concurrency: 2})
+        expect(applyChange({...config, concurrency: 2}, 'concurrency', 'unlimited')).toEqual(config)
+        expect(applyChange(config, 'concurrency', 'unlimited')).toEqual(config)
+        expect(() => applyChange(config, 'concurrency', '9')).toThrow('Parse')
+    })
+
     test('inherit clears the field and drops an emptied tool', () => {
         const config = {subagent: {model: 'acme/fast', thinkingLevel: 'low'}} as const
         expect(applyChange(config, 'subagent.model', 'inherit')).toEqual({
@@ -253,7 +266,8 @@ describe('dropStaleModels', () => {
 describe('nop-config command', () => {
     test('describes itself', () => {
         expect(registered().description).toBe(
-            'Choose the model and thinking level for each subagent tool, and the web search engine'
+            'Choose the model and thinking level for each subagent tool, the web search engine, '
+                + 'and how many subagents run at once'
         )
     })
 
@@ -268,7 +282,8 @@ describe('nop-config command', () => {
                 + 'subagent.thinkingLevel: inherit\n'
                 + 'subagent-fetch.model: inherit\n'
                 + 'subagent-fetch.thinkingLevel: inherit\n'
-                + 'web-search.engine: exa',
+                + 'web-search.engine: exa\n'
+                + 'concurrency: unlimited',
             'info'
         )
     })
@@ -284,7 +299,8 @@ describe('nop-config command', () => {
                 + 'subagent.thinkingLevel: inherit\n'
                 + 'subagent-fetch.model: inherit\n'
                 + 'subagent-fetch.thinkingLevel: inherit\n'
-                + 'web-search.engine: exa'
+                + 'web-search.engine: exa\n'
+                + 'concurrency: unlimited'
         )
     })
 
@@ -385,6 +401,19 @@ describe('nop-config command', () => {
             subagent: {thinkingLevel: 'low'},
             'web-search': {engine: 'exa'}
         })
+    })
+
+    test('the concurrency row cycles through the levels and back to unlimited', async () => {
+        const {panel} = await openPanel()
+        for (let i = 0; i < 5; i += 1) panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({concurrency: 1})
+
+        for (let i = 0; i < 3; i += 1) panel.handleInput(enter)
+        expect(loadConfig()).toEqual({concurrency: 4})
+
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({})
     })
 
     test('writes nothing until a row changes', async () => {

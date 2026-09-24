@@ -17,7 +17,8 @@ import {type Static, type TObject, Type} from 'typebox'
 
 import {brokenConfig, findModel, loadConfig} from '../config/config'
 import type {NopConfig, NopTool} from '../config/config'
-import {renderCall, renderResult} from './subagentTui'
+import {slots} from './slots'
+import {queued, renderCall, renderResult} from './subagentTui'
 
 enum SubagentErrors {
     EmptyOutput = 'Empty model output',
@@ -58,7 +59,7 @@ type SubagentResult = {
     details: SubagentDetails
 }
 
-type SubagentUpdate = AgentToolUpdateCallback<SubagentDetails> | undefined
+type SubagentUpdate = AgentToolUpdateCallback<SubagentDetails | undefined> | undefined
 
 const progressThrottleMs = 100
 
@@ -97,8 +98,12 @@ const safeConfig = (ctx: ExtensionContext): NopConfig => {
     }
 }
 
-const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOptions => {
-    const config = safeConfig(ctx)[tool] ?? {}
+const configuredOptions = (
+    nop: NopConfig,
+    ctx: ExtensionContext,
+    tool: NopTool
+): SubagentOptions => {
+    const config = nop[tool] ?? {}
 
     return {
         ...defaultOptions(ctx.cwd),
@@ -106,6 +111,10 @@ const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOption
         model: findModel(ctx.modelRegistry, config.model) ?? ctx.model
     }
 }
+
+// A bare text update carries no details, so the row shows the text and keeps its stats.
+const status = (onUpdate: SubagentUpdate, text: string): void =>
+    onUpdate?.({content: [{type: 'text', text}], details: undefined})
 
 const runSubagent = async (
     task: string,
@@ -236,18 +245,31 @@ type SubagentToolSpec<T extends TObject> = {
 }
 
 const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: SubagentToolSpec<T>) => {
-    pi.registerTool<T, SubagentDetails>({
+    pi.registerTool<T, SubagentDetails | undefined>({
         name: spec.name,
         label: spec.label,
         description: spec.description,
         parameters: spec.parameters,
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
+            const nop = safeConfig(ctx)
             const {task, options, failure, verify} = await spec.prepare(
                 params,
                 signal,
-                configuredOptions(ctx, spec.name)
+                configuredOptions(nop, ctx, spec.name)
             )
-            const {text, details} = await runSubagent(task, signal, onUpdate, options)
+            let waited = false
+            slots.setCap(nop.concurrency ?? Number.POSITIVE_INFINITY)
+            const {text, details} = await slots.run(
+                () => {
+                    // Clears "queued…" so the row falls back to "starting…" while the session loads.
+                    if (waited) status(onUpdate, '')
+                    return runSubagent(task, signal, onUpdate, options)
+                },
+                () => {
+                    waited = true
+                    status(onUpdate, queued)
+                }
+            )
 
             if (failure !== undefined) throw new Error(failure(text))
             return {

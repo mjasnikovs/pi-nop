@@ -10,6 +10,8 @@ const actual = await import('@earendil-works/pi-coding-agent')
 await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgentDir}))
 
 const {
+    concurrencyKey,
+    concurrencyLevels,
     defaultEngine,
     engines,
     findModel,
@@ -55,6 +57,11 @@ describe('config', () => {
             '{"subagent":{"engine":"exa"}}',
             '{"web-search":{"engine":"bing"}}',
             '{"web-search":{"model":"acme/fast"}}',
+            '{"concurrency":0}',
+            '{"concurrency":5}',
+            '{"concurrency":"2"}',
+            '{"concurrency":2.5}',
+            '{"concurrency":null}',
             '[]',
             '{"subagent":null}',
             '{"subagent":[]}'
@@ -89,6 +96,19 @@ describe('config', () => {
         writeFileSync(configPath, '{"web-search":{"engine":"ddg"}}')
 
         expect(loadConfig()).toEqual({'web-search': {engine: 'ddg'}})
+    })
+
+    test('accepts every concurrency level', () => {
+        for (const level of concurrencyLevels) {
+            writeFileSync(configPath, `{"concurrency":${level}}`)
+
+            expect(loadConfig()).toEqual({concurrency: level})
+        }
+    })
+
+    test('lists every concurrency level under the concurrency key', () => {
+        expect(concurrencyLevels).toEqual([1, 2, 3, 4])
+        expect(concurrencyKey).toBe('concurrency')
     })
 
     test('lists every engine and defaults to exa', () => {

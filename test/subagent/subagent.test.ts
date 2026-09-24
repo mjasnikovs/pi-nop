@@ -246,7 +246,7 @@ describe('runSubagent', () => {
     })
 
     test('streams the text as it stood, one snapshot per throttle window', async () => {
-        const seen: SubagentDetails[] = []
+        const seen: Array<SubagentDetails | undefined> = []
         session.text = 'partial'
 
         session.onPrompt = () => {
@@ -266,7 +266,7 @@ describe('runSubagent', () => {
     })
 
     test('streams again once the throttle window passes', async () => {
-        const seen: SubagentDetails[] = []
+        const seen: Array<SubagentDetails | undefined> = []
         session.text = 'first'
 
         session.onPrompt = () => {
@@ -282,11 +282,11 @@ describe('runSubagent', () => {
             seen.push(update.details)
         })
 
-        expect(seen.map(details => details.lastAssistantText)).toEqual(['first', 'second'])
+        expect(seen.map(details => details?.lastAssistantText)).toEqual(['first', 'second'])
     })
 
     test('keeps the last text when a tool-only turn has none', async () => {
-        const seen: SubagentDetails[] = []
+        const seen: Array<SubagentDetails | undefined> = []
         session.text = 'checking'
 
         session.onPrompt = () => {
@@ -302,11 +302,11 @@ describe('runSubagent', () => {
             seen.push(update.details)
         })
 
-        expect(seen.map(details => details.lastAssistantText)).toEqual(['checking', 'checking'])
+        expect(seen.map(details => details?.lastAssistantText)).toEqual(['checking', 'checking'])
     })
 
     test('ignores turn_end for messages the subagent did not author', async () => {
-        const seen: SubagentDetails[] = []
+        const seen: Array<SubagentDetails | undefined> = []
         session.onPrompt = () => {
             session.emit({type: 'turn_end', message: {role: 'user'}})
             session.emit({type: 'turn_end', message: {role: 'toolResult'}})
@@ -321,7 +321,7 @@ describe('runSubagent', () => {
     })
 
     test('measures elapsed from the start of the run', async () => {
-        const seen: SubagentDetails[] = []
+        const seen: Array<SubagentDetails | undefined> = []
         session.onPrompt = () => {
             clock += 250
             session.emitAssistant()
@@ -332,7 +332,7 @@ describe('runSubagent', () => {
         const result = await runSubagent('task', undefined, update => {
             seen.push(update.details)
         })
-        expect(seen.map(details => details.elapsedMs)).toEqual([250])
+        expect(seen.map(details => details?.elapsedMs)).toEqual([250])
         expect(result.details.elapsedMs).toBe(1_250)
     })
 
@@ -676,5 +676,76 @@ describe('extension', () => {
             tool.execute('id', {task: 'task'}, controller.signal, undefined, ctx('/fake/cwd'))
         ).rejects.toThrow('Subagent aborted')
         expect(session.abort).toHaveBeenCalledTimes(1)
+    })
+
+    // Every prompt hangs until finish() is called, which frees each one held so far.
+    const holdPrompt = (): (() => void) => {
+        const held: Array<() => void> = []
+        session.onPrompt = () => new Promise<void>(resolve => held.push(resolve))
+        return () => {
+            for (const resolve of held.splice(0)) resolve()
+        }
+    }
+
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+    test('with a cap the second call waits, tells the tui, and runs after the first', async () => {
+        saveConfig({concurrency: 1})
+        const tool = registeredTool()
+        const finish = holdPrompt()
+        const updates: unknown[] = []
+        const first = tool.execute('id', {task: 'one'}, undefined, undefined, ctx('/c'))
+        const second = tool.execute(
+            'id',
+            {task: 'two'},
+            undefined,
+            update => updates.push(update),
+            ctx('/c')
+        )
+        await settle()
+        expect(createAgentSession).toHaveBeenCalledTimes(1)
+        expect(updates).toEqual([{content: [{type: 'text', text: 'queued…'}], details: undefined}])
+
+        finish()
+        await first
+        await settle()
+        expect(updates).toEqual([
+            {content: [{type: 'text', text: 'queued…'}], details: undefined},
+            {content: [{type: 'text', text: ''}], details: undefined}
+        ])
+        finish()
+        await second
+        expect(createAgentSession).toHaveBeenCalledTimes(2)
+        expect(session.prompt).toHaveBeenLastCalledWith('two', {expandPromptTemplates: false})
+    })
+
+    test('a queued call that was aborted never opens a session', async () => {
+        saveConfig({concurrency: 1})
+        const tool = registeredTool()
+        const finish = holdPrompt()
+        const controller = new AbortController()
+        const first = tool.execute('id', {task: 'one'}, undefined, undefined, ctx('/c'))
+        const second = tool.execute('id', {task: 'two'}, controller.signal, undefined, ctx('/c'))
+        await settle()
+        controller.abort()
+        finish()
+
+        await first
+        await expect(second).rejects.toThrow('Subagent aborted')
+        expect(createAgentSession).toHaveBeenCalledTimes(1)
+    })
+
+    test('without a cap both calls open a session at once', async () => {
+        const tool = registeredTool()
+        const finish = holdPrompt()
+
+        const runs = [
+            tool.execute('id', {task: 'one'}, undefined, undefined, ctx('/c')),
+            tool.execute('id', {task: 'two'}, undefined, undefined, ctx('/c'))
+        ]
+        await settle()
+        expect(createAgentSession).toHaveBeenCalledTimes(2)
+
+        finish()
+        await Promise.all(runs)
     })
 })

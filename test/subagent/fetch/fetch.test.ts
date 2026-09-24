@@ -21,11 +21,12 @@ const options = {
     thinkingLevel: 'low',
     model
 } as Partial<SubagentOptions>
-const configuredOptions = mock((_ctx: ExtensionContext, _tool: string) => options)
+const configuredOptions = mock((_nop: unknown, _ctx: ExtensionContext, _tool: string) => options)
 const {SubagentErrors} = await import('../../../src/subagent/subagent')
 await mock.module('../../../src/subagent/subagent', () => ({
     runSubagent,
     configuredOptions,
+    safeConfig: () => ({}),
     SubagentErrors
 }))
 
@@ -74,7 +75,7 @@ describe('fetch tool', () => {
         const signal = new AbortController().signal
         const result = await tool().execute('id', params, signal, onUpdate, ctx)
         expect(fetchMock).toHaveBeenCalledWith('https://example.com/', {signal, headers: {}})
-        expect(configuredOptions).toHaveBeenCalledWith(ctx, 'subagent-fetch')
+        expect(configuredOptions).toHaveBeenCalledWith({}, ctx, 'subagent-fetch')
         expect(runSubagent).toHaveBeenCalledWith(
             buildTask('what', 'https://example.com/final', 'page'),
             signal,

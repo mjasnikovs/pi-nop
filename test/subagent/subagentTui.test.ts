@@ -5,7 +5,9 @@ import {Container, stripTerminalSequences} from '@earendil-works/pi-tui'
 import type {SubagentDetails} from '../../src/subagent/subagent'
 import type {SubagentRenderState} from '../../src/subagent/subagentTui'
 import {
+    clockIcon,
     idleTicks,
+    queued,
     renderCall as renderCallTui,
     renderResult as renderResultTui,
     spinnerFrames,
@@ -169,6 +171,39 @@ describe('subagent tui', () => {
         expect(out).toHaveLength(3)
         expect(out[1]).toBe('  Checking src/auth/session.ts')
         expect(out[2]).toBe('  TIME 00:10 • TURN 12 • ■□□□□□□□□□ 10/120k')
+    })
+
+    test('a queued call shows a still clock, no spinner, and holds TIME at zero', async () => {
+        const ctx = makeContext()
+        lines(renderCall(ctx.args, theme, ctx as never))
+        ctx.state.rows!.startedAt = Date.now() - 95_000
+
+        const out = lines(
+            renderResult(
+                {content: [{type: 'text', text: queued}], details: undefined},
+                {expanded: false, isPartial: true},
+                theme,
+                ctx as never
+            )
+        )
+        expect(out[0]).toStartWith(`${clockIcon} subagent`)
+        expect(out[1]).toBe('  queued…')
+        expect(out[2]).toBe('  TIME 00:00 • TURN 0 • □□□□□□□□□□ ?/?')
+        expect(ctx.state.rows!.startedAt).toBeUndefined()
+        expect(await stillTicking(ctx.state.rows!)).toBe(false)
+
+        const started = lines(
+            renderResult(
+                {content: [{type: 'text', text: ''}], details: undefined},
+                {expanded: false, isPartial: true},
+                theme,
+                ctx as never
+            )
+        )
+        expect(started[0]).toStartWith(`${spinnerFrames[0]} subagent`)
+        expect(started[1]).toBe('  starting…')
+        expect(started[2]).toContain('TIME 00:00')
+        expect(ctx.state.rows!.startedAt).toBeGreaterThan(Date.now() - 1_000)
     })
 
     test('finished result swaps the spinner for a check and stops the timer', () => {
