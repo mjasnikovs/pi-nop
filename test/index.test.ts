@@ -25,12 +25,12 @@ beforeEach(() => {
 })
 
 describe('extension', () => {
-    test('registers the subagent and fetch tools', () => {
+    test('registers the subagent, fetch and search tools', () => {
         register(pi)
 
-        expect(registerTool).toHaveBeenCalledTimes(2)
+        expect(registerTool).toHaveBeenCalledTimes(3)
         const names = registerTool.mock.calls.map(([tool]) => (tool as ToolDefinition).name)
-        expect(names).toEqual(['subagent', 'subagent-fetch'])
+        expect(names).toEqual(['subagent', 'subagent-fetch', 'web-search'])
     })
 
     test('registers the config command', () => {

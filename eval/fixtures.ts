@@ -33,8 +33,73 @@ const isNodeAgent = (request: Request): boolean =>
     (request.headers.get('user-agent') ?? 'node').startsWith('node')
 
 const basicAuth = 'Basic ' + Buffer.from(`user:${password}`).toString('base64')
+const searchKey = 'fixture-search-key'
 
-const routes: Record<string, (request: Request) => Response> = {
+type Hit = {title: string; url: string; description: string}
+
+// One corpus behind every fake engine, picked by a word in the query.
+const hits = (origin: string, query: string): Hit[] => {
+    if (query.includes('nothing')) return []
+    if (query.includes('bad url'))
+        return [
+            {title: 'Mirror', url: 'ftp://mirror.test/zorblax', description: 'FTP mirror.'},
+            {title: 'Zorblax CLI', url: `${origin}/tool`, description: 'The Zorblax manual.'}
+        ]
+    return [
+        {title: 'Cats', url: `${origin}/cats`, description: 'Cats sleep most of the day.'},
+        {
+            title: 'Zorblax CLI',
+            url: `${origin}/tool`,
+            description: 'Install and run the Zorblax CLI.'
+        },
+        {title: 'Old news', url: `${origin}/stale`, description: 'Python 2.7 is current.'}
+    ]
+}
+
+const exaBlock = (hit: Hit): string =>
+    `Title: ${hit.title}\nURL: ${hit.url}\nPublished: N/A\nAuthor: N/A\nHighlights:\n${hit.description}\n...\nMore text.\n`
+
+const exaReply = (query: string, origin: string): string => {
+    if (query.includes('rpc error'))
+        return JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            error: {code: -32000, message: 'quota exceeded'}
+        })
+    const text = hits(origin, query).map(exaBlock).join('\n---\n\n')
+    return JSON.stringify({jsonrpc: '2.0', id: 1, result: {content: [{type: 'text', text}]}})
+}
+
+const ddgRow = (hit: Hit): string =>
+    `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(hit.url)}&rut=x">${hit.title}</a>`
+    + `<a class="result__snippet" href="#">${hit.description}</a></div>`
+
+const query = (request: Request): string => new URL(request.url).searchParams.get('q') ?? ''
+const originOf = (request: Request): string => new URL(request.url).origin
+
+const searchRoutes: Record<string, (request: Request) => Promise<Response> | Response> = {
+    '/exa': async request => {
+        const body = (await request.json()) as {params: {arguments: {query: string}}}
+        return typed(
+            `event: message\ndata: ${exaReply(body.params.arguments.query, originOf(request))}\n\n`,
+            'text/event-stream'
+        )
+    },
+    '/brave': request =>
+        request.headers.get('x-subscription-token') === searchKey ?
+            typed(
+                JSON.stringify({web: {results: hits(originOf(request), query(request))}}),
+                'application/json'
+            )
+        :   new Response('bad key', {status: 401, statusText: 'Unauthorized'}),
+    '/ddg': request =>
+        query(request).includes('challenge') ?
+            typed('<html><body>anomaly challenge</body></html>', 'text/html', {status: 202})
+        :   html(hits(originOf(request), query(request)).map(ddgRow).join(''))
+}
+
+const routes: Record<string, (request: Request) => Promise<Response> | Response> = {
+    ...searchRoutes,
     '/tool': () =>
         html(
             `<h1>Zorblax CLI</h1><p>Install it with <code>${install}</code>. The default port is ${port}.</p>`
@@ -226,4 +291,4 @@ const closedBase = async (): Promise<string> => {
     return closed
 }
 
-export {closedBase, install, password, port, serveFixtures}
+export {closedBase, install, password, port, searchKey, serveFixtures}

@@ -25,14 +25,29 @@ const toolSchema = Type.Object(
     },
     {additionalProperties: false}
 )
-const configSchema = Type.Partial(Type.Record(Type.Enum(tools), toolSchema), {
-    additionalProperties: false
-})
+const engines = ['exa', 'brave', 'ddg'] as const
+const defaultEngine = 'exa' satisfies EngineName
+const engineSchema = Type.Enum(engines)
+const searchSchema = Type.Object(
+    {engine: Type.Optional(engineSchema)},
+    {additionalProperties: false}
+)
+const searchTool = 'web-search'
+const configSchema = Type.Object(
+    {
+        subagent: Type.Optional(toolSchema),
+        'subagent-fetch': Type.Optional(toolSchema),
+        [searchTool]: Type.Optional(searchSchema)
+    },
+    {additionalProperties: false}
+)
 const brokenConfig =
     'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
 
 type NopTool = (typeof tools)[number]
+type EngineName = (typeof engines)[number]
 type ToolConfig = Static<typeof toolSchema>
+type SearchConfig = Static<typeof searchSchema>
 type NopConfig = Static<typeof configSchema>
 
 const configPath = (): string => join(getAgentDir(), configFile)
@@ -52,5 +67,18 @@ const modelSpec = (model: Model<Api>): string => `${model.provider}/${model.id}`
 const findModel = (registry: ModelRegistry, spec?: string): Model<Api> | undefined =>
     registry.getAvailable().find(model => modelSpec(model) === spec)
 
-export {brokenConfig, findModel, loadConfig, modelSpec, saveConfig, thinkingLevels, tools}
-export type {NopConfig, NopTool, ToolConfig}
+export {
+    brokenConfig,
+    defaultEngine,
+    engines,
+    engineSchema,
+    findModel,
+    loadConfig,
+    modelSpec,
+    saveConfig,
+    searchSchema,
+    searchTool,
+    thinkingLevels,
+    tools
+}
+export type {EngineName, NopConfig, NopTool, SearchConfig, ToolConfig}

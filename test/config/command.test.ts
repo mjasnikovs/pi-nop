@@ -102,7 +102,7 @@ afterAll(() => {
 })
 
 describe('panelItems', () => {
-    test('builds a painted header, a model and a thinking row per tool, gaps between', () => {
+    test('builds a painted header, a model and a thinking row per tool, then the engine', () => {
         const items = panelItems(
             {'subagent-fetch': {model: 'acme/slow', thinkingLevel: 'high'}},
             models,
@@ -115,8 +115,13 @@ describe('panelItems', () => {
             ['gap:subagent-fetch', '', ''],
             ['header:subagent-fetch', '<SUBAGENT-FETCH>', ''],
             ['subagent-fetch.model', 'model', 'acme/slow'],
-            ['subagent-fetch.thinkingLevel', 'thinking', 'high']
+            ['subagent-fetch.thinkingLevel', 'thinking', 'high'],
+            ['gap:web-search', '', ''],
+            ['header:web-search', '<WEB-SEARCH>', ''],
+            ['web-search.engine', 'engine', 'exa']
         ])
+        expect(items[9]?.values).toEqual(['exa', 'brave', 'ddg'])
+        expect(panelItems({'web-search': {engine: 'ddg'}}, models)[9]?.currentValue).toBe('ddg')
         expect(panelItems({}, models)[0]?.label).toBe('SUBAGENT')
         expect(items[2]?.values).toEqual([
             'inherit',
@@ -190,6 +195,15 @@ describe('applyChange', () => {
         })
     })
 
+    test('sets the search engine and keeps the tools', () => {
+        const config = {subagent: {model: 'acme/fast'}} as const
+        expect(applyChange(config, 'web-search.engine', 'brave')).toEqual({
+            ...config,
+            'web-search': {engine: 'brave'}
+        })
+        expect(() => applyChange(config, 'web-search.engine', 'bing')).toThrow('Parse')
+    })
+
     test('inherit clears the field and drops an emptied tool', () => {
         const config = {subagent: {model: 'acme/fast', thinkingLevel: 'low'}} as const
         expect(applyChange(config, 'subagent.model', 'inherit')).toEqual({
@@ -239,7 +253,7 @@ describe('dropStaleModels', () => {
 describe('nop-config command', () => {
     test('describes itself', () => {
         expect(registered().description).toBe(
-            'Choose the model and thinking level for each subagent tool'
+            'Choose the model and thinking level for each subagent tool, and the web search engine'
         )
     })
 
@@ -253,7 +267,8 @@ describe('nop-config command', () => {
             'subagent.model: acme/fast\n'
                 + 'subagent.thinkingLevel: inherit\n'
                 + 'subagent-fetch.model: inherit\n'
-                + 'subagent-fetch.thinkingLevel: inherit',
+                + 'subagent-fetch.thinkingLevel: inherit\n'
+                + 'web-search.engine: exa',
             'info'
         )
     })
@@ -268,7 +283,8 @@ describe('nop-config command', () => {
             'subagent.model: inherit\n'
                 + 'subagent.thinkingLevel: inherit\n'
                 + 'subagent-fetch.model: inherit\n'
-                + 'subagent-fetch.thinkingLevel: inherit'
+                + 'subagent-fetch.thinkingLevel: inherit\n'
+                + 'web-search.engine: exa'
         )
     })
 
@@ -349,6 +365,25 @@ describe('nop-config command', () => {
         expect(loadConfig()).toEqual({
             subagent: {model: 'scope/only'},
             'subagent-fetch': {model: 'acme/slow'}
+        })
+    })
+
+    test('the engine row cycles and saves without touching the tools', async () => {
+        writeFileSync(configPath, '{"subagent":{"thinkingLevel":"low"}}')
+
+        const {panel} = await openPanel()
+        for (let i = 0; i < 4; i += 1) panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({
+            subagent: {thinkingLevel: 'low'},
+            'web-search': {engine: 'brave'}
+        })
+
+        panel.handleInput(enter)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({
+            subagent: {thinkingLevel: 'low'},
+            'web-search': {engine: 'exa'}
         })
     })
 

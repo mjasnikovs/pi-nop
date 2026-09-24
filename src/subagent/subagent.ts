@@ -291,5 +291,12 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {configuredOptions, progressThrottleMs, registerSubagentTool, runSubagent, SubagentErrors}
+export {
+    configuredOptions,
+    progressThrottleMs,
+    registerSubagentTool,
+    runSubagent,
+    safeConfig,
+    SubagentErrors
+}
 export type {SubagentDetails, SubagentOptions, SubagentToolSpec, SubagentUpdate}

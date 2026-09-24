@@ -4,9 +4,21 @@ import type {SettingItem} from '@earendil-works/pi-tui'
 import {SelectList, SettingsList} from '@earendil-works/pi-tui'
 import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import {readFileSync} from 'node:fs'
+import Value from 'typebox/value'
 
 import {boxed} from './box'
-import {brokenConfig, loadConfig, modelSpec, saveConfig, thinkingLevels, tools} from './config'
+import {
+    brokenConfig,
+    defaultEngine,
+    engines,
+    loadConfig,
+    modelSpec,
+    saveConfig,
+    searchSchema,
+    searchTool,
+    thinkingLevels,
+    tools
+} from './config'
 import {gap, header, settable, skipInert} from './sections'
 import type {NopConfig, NopTool, ToolConfig} from './config'
 
@@ -20,6 +32,7 @@ const title = (): string =>
 type Field = keyof ToolConfig
 
 const rowId = (tool: NopTool, field: Field): string => `${tool}.${field}`
+const engineRow = `${searchTool}.engine`
 
 const parseRowId = (id: string): [NopTool, Field] => {
     const [tool, field] = id.split('.') as [NopTool, Field]
@@ -43,8 +56,8 @@ const modelPicker =
 
 const same = (text: string): string => text
 
-const panelItems = (config: NopConfig, models: string[], paint = same): SettingItem[] =>
-    tools.flatMap((tool, index) => [
+const panelItems = (config: NopConfig, models: string[], paint = same): SettingItem[] => [
+    ...tools.flatMap((tool, index) => [
         ...(index === 0 ? [] : [gap(tool)]),
         header(tool, paint),
         {
@@ -59,7 +72,16 @@ const panelItems = (config: NopConfig, models: string[], paint = same): SettingI
             currentValue: config[tool]?.thinkingLevel ?? inherit,
             values: [inherit, ...thinkingLevels]
         }
-    ])
+    ]),
+    gap(searchTool),
+    header(searchTool, paint),
+    {
+        id: engineRow,
+        label: 'engine',
+        currentValue: config[searchTool]?.engine ?? defaultEngine,
+        values: [...engines]
+    }
+]
 
 const withTool = (config: NopConfig, tool: NopTool, entry: ToolConfig): NopConfig => {
     const {[tool]: _dropped, ...rest} = config
@@ -67,6 +89,9 @@ const withTool = (config: NopConfig, tool: NopTool, entry: ToolConfig): NopConfi
 }
 
 const applyChange = (config: NopConfig, id: string, value: string): NopConfig => {
+    if (id === engineRow)
+        return {...config, [searchTool]: Value.Parse(searchSchema, {engine: value})}
+
     const [tool, field] = parseRowId(id)
     const {[field]: _dropped, ...entry} = config[tool] ?? {}
 
@@ -106,7 +131,8 @@ const openConfig = (ctx: ExtensionCommandContext): NopConfig => {
 
 export default function (pi: ExtensionAPI) {
     pi.registerCommand('nop-config', {
-        description: 'Choose the model and thinking level for each subagent tool',
+        description:
+            'Choose the model and thinking level for each subagent tool, and the web search engine',
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)

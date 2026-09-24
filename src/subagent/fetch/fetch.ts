@@ -198,4 +198,4 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {buildTask, taskShare, verifyAnswer}
+export {buildTask, describe, parseTarget, status, taskShare, verifyAnswer}

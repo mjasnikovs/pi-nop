@@ -9,8 +9,16 @@ import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
 const actual = await import('@earendil-works/pi-coding-agent')
 await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgentDir}))
 
-const {findModel, loadConfig, modelSpec, saveConfig, thinkingLevels} =
-    await import('../../src/config/config')
+const {
+    defaultEngine,
+    engines,
+    findModel,
+    loadConfig,
+    modelSpec,
+    saveConfig,
+    searchTool,
+    thinkingLevels
+} = await import('../../src/config/config')
 
 const configPath = join(agentDir, 'pi-nop.json')
 useAgentDir()
@@ -44,6 +52,9 @@ describe('config', () => {
             '{"subagent":{"model":1,"thinkingLevel":"high"}}',
             '{"subagent":{"thinkingLevel":"ultra"}}',
             '{"subagent":{"tools":[]}}',
+            '{"subagent":{"engine":"exa"}}',
+            '{"web-search":{"engine":"bing"}}',
+            '{"web-search":{"model":"acme/fast"}}',
             '[]',
             '{"subagent":null}',
             '{"subagent":[]}'
@@ -72,6 +83,18 @@ describe('config', () => {
         writeFileSync(configPath, '{"subagent-fetch":{"model":"acme/fast"}}')
 
         expect(loadConfig()).toEqual({'subagent-fetch': {model: 'acme/fast'}})
+    })
+
+    test('accepts a search engine', () => {
+        writeFileSync(configPath, '{"web-search":{"engine":"ddg"}}')
+
+        expect(loadConfig()).toEqual({'web-search': {engine: 'ddg'}})
+    })
+
+    test('lists every engine and defaults to exa', () => {
+        expect(engines).toEqual(['exa', 'brave', 'ddg'])
+        expect(defaultEngine).toBe('exa')
+        expect(searchTool).toBe('web-search')
     })
 
     test('creates the agent dir when saving', () => {

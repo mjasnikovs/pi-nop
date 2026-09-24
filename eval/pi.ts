@@ -26,7 +26,11 @@ const isToolResult = (message: Message): message is ToolResultMessage =>
     message.role === 'toolResult'
 
 // Every finished message arrives as a message_end event. The rest of the stream is progress.
-const runPi = async (prompt: string, tool: string): Promise<Run> => {
+const runPi = async (
+    prompt: string,
+    tool: string,
+    env: Record<string, string> = {}
+): Promise<Run> => {
     const proc = Bun.spawn(
         [
             'pi',
@@ -43,7 +47,7 @@ const runPi = async (prompt: string, tool: string): Promise<Run> => {
             tool,
             prompt
         ],
-        {stdout: 'pipe', stderr: 'inherit'}
+        {stdout: 'pipe', stderr: 'inherit', env: {...process.env, ...env}}
     )
     const events = await new Response(proc.stdout).text()
     await proc.exited
