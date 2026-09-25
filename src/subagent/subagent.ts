@@ -24,12 +24,9 @@ enum SubagentErrors {
     EmptyOutput = 'Empty model output',
     Aborted = 'Subagent aborted',
     RunFailed = 'Subagent run failed: ',
-    FetchFailed = 'Fetch failed: ',
     NoModel = 'No model selected',
     Truncated = 'Subagent output cut off at the model output limit',
-    BadAnswer = 'Subagent answer failed verification: ',
-    Compacted = 'Subagent context was compacted, so its answer would not rest on the page',
-    PageTooBig = 'Fetch failed: page too big for the subagent model context window. Tell the user; no query and no retry can read it'
+    Compacted = 'Subagent context was compacted, so its answer would not rest on its source'
 }
 
 enum SubagentTools {
@@ -62,6 +59,11 @@ type SubagentResult = {
 type SubagentUpdate = AgentToolUpdateCallback<SubagentDetails | undefined> | undefined
 
 const progressThrottleMs = 100
+
+// A cancelled call is reported as such, never as whatever failed underneath it.
+const unlessAborted = (signal: AbortSignal | undefined, error: unknown): void => {
+    if (signal?.aborted) throw new Error(SubagentErrors.Aborted, {cause: error})
+}
 
 const lastAssistant = (session: AgentSession): AssistantMessage | undefined =>
     session.messages.findLast(message => message.role === 'assistant')
@@ -319,6 +321,7 @@ export {
     registerSubagentTool,
     runSubagent,
     safeConfig,
-    SubagentErrors
+    SubagentErrors,
+    unlessAborted
 }
 export type {SubagentDetails, SubagentOptions, SubagentToolSpec, SubagentUpdate}

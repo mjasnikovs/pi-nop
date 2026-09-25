@@ -1,23 +1,14 @@
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent'
-import {estimateTokens} from '@earendil-works/pi-coding-agent'
 import type {Api, Model} from '@earendil-works/pi-ai'
 import {Type} from 'typebox'
 
-import {registerSubagentTool, SubagentErrors} from '../subagent'
-import {answerPrompt, notOnPage, parseAnswer} from './answer'
+import {layoutPrompt, parseAnswer, verifyAnswer} from '../answer'
+import {fits} from '../budget'
+import {describe} from '../describe'
+import {registerSubagentTool, SubagentErrors, unlessAborted} from '../subagent'
 import {digest} from './digest'
 import type {Digest} from './digest'
-
-// MAGIC NUMBER: share of the context window the task may take. The rest is headroom for
-// the system prompt, the answer and the rough 4 chars per token estimate pi uses.
-const taskShare = 0.75
-
-// Node wraps network errors as a bare "fetch failed" TypeError with the reason in `cause`.
-const describe = (error: unknown): string => {
-    if (!(error instanceof Error)) return String(error)
-    if (error.cause instanceof Error) return `${error.message}: ${error.cause.message}`
-    return error.message
-}
+import {FetchErrors} from './errors'
 
 type Target = {
     url: string
@@ -29,7 +20,7 @@ const parseTarget = (url: string): Target => {
     const parsed = new URL(url)
 
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-        throw new Error(SubagentErrors.FetchFailed + `unsupported protocol ${parsed.protocol}`)
+        throw new Error(FetchErrors.Failed + `unsupported protocol ${parsed.protocol}`)
     if (parsed.username === '' && parsed.password === '') return {url: parsed.href, headers: {}}
 
     const user = decodeURIComponent(parsed.username)
@@ -42,8 +33,8 @@ const parseTarget = (url: string): Target => {
 
 const fetchPage = async (target: Target, signal: AbortSignal | undefined): Promise<Response> =>
     fetch(target.url, {signal, headers: target.headers}).catch((error: unknown) => {
-        if (signal?.aborted) throw new Error(SubagentErrors.Aborted, {cause: error})
-        throw new Error(SubagentErrors.FetchFailed + describe(error), {cause: error})
+        unlessAborted(signal, error)
+        throw new Error(FetchErrors.Failed + describe(error), {cause: error})
     })
 
 const status = (response: Response, requested: string): string => {
@@ -103,6 +94,13 @@ const loadPage = async (requested: string, signal: AbortSignal | undefined): Pro
     }
 }
 
+const pagePrompt = layoutPrompt({
+    source: 'page text',
+    subject: 'page',
+    unit: 'page line',
+    answerNotes: ['If the page states when it was written or updated, include that.']
+})
+
 const buildTask = (query: string, url: string, page: string, failure?: string): string =>
     [
         `<query>${query}</query>`,
@@ -111,35 +109,10 @@ const buildTask = (query: string, url: string, page: string, failure?: string): 
         `<page>\n${page}\n</page>`
     ].join('\n')
 
-// pi counts 4 chars per token, which holds for ASCII only. Other scripts run near one
-// token per character, and the plain estimate let CJK pages through that then overflowed.
-const estimateTaskTokens = (task: string): number => {
-    const nonAscii = task.match(/[\u0080-\uffff]/g)?.length ?? 0
-    const base = estimateTokens({role: 'user', content: task, timestamp: Date.now()})
-    return base + nonAscii - Math.floor(nonAscii / 4)
-}
-
-// The layout is returned as is, so the caller sees the coverage and the evidence too.
-const verifyAnswer = (text: string, page: string): string => {
-    const answer = parseAnswer(text)
-
-    if (answer === undefined) throw new Error(SubagentErrors.BadAnswer + 'not in the answer layout')
-    if (answer.covered !== 'no' && answer.evidence.length === 0)
-        throw new Error(SubagentErrors.BadAnswer + 'no evidence for a covered answer')
-
-    const invented = notOnPage(answer, page)
-
-    if (invented.length > 0)
-        throw new Error(
-            SubagentErrors.BadAnswer + 'evidence not on the page: ' + invented.join(' | ')
-        )
-    return text
-}
-
 // The status leads and the layout goes, or the caller reads "COVERED: yes" as a success.
 // Text not in the layout is dropped, as verifyAnswer would reject it.
 const describeFailure = (failure: string, text: string): string => {
-    const lead = SubagentErrors.FetchFailed + `${failure}. Report this status.`
+    const lead = FetchErrors.Failed + `${failure}. Report this status.`
     const answer = parseAnswer(text)?.answer
 
     if (answer === undefined) return lead
@@ -149,9 +122,9 @@ const describeFailure = (failure: string, text: string): string => {
 // An oversized error page still reports its status; the size is the lesser fact.
 const assertFits = (task: string, model: Model<Api> | undefined, failure?: string): void => {
     if (model === undefined) throw new Error(SubagentErrors.NoModel)
-    if (estimateTaskTokens(task) <= model.contextWindow * taskShare) return
-    if (failure === undefined) throw new Error(SubagentErrors.PageTooBig)
-    throw new Error(SubagentErrors.FetchFailed + failure)
+    if (fits(task, model)) return
+    if (failure === undefined) throw new Error(FetchErrors.PageTooBig)
+    throw new Error(FetchErrors.Failed + failure)
 }
 
 export default function (pi: ExtensionAPI) {
@@ -181,16 +154,17 @@ export default function (pi: ExtensionAPI) {
         // Pi renders while the call is still streaming, so either field may be missing.
         title: args => [args?.query, args?.url].filter(part => part !== undefined).join(' '),
         prepare: async (params, signal, configured) => {
-            const options = {...configured, prompt: answerPrompt, tools: []}
+            const options = {...configured, prompt: pagePrompt, tools: []}
             const page = await loadPage(params.url, signal)
             const failure = page.failure
 
             if (failure !== undefined && page.text === '')
-                throw new Error(SubagentErrors.FetchFailed + failure)
+                throw new Error(FetchErrors.Failed + failure)
 
             const task = buildTask(params.query, page.url, page.text, failure)
             assertFits(task, options.model, failure)
-            const verify = (text: string) => verifyAnswer(text, page.text)
+            const verify = (text: string) =>
+                verifyAnswer(text, [{text: page.text, wholeLines: false}])
 
             if (failure === undefined) return {task, options, verify}
             return {task, options, verify, failure: text => describeFailure(failure, text)}
@@ -198,4 +172,4 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {buildTask, describe, parseTarget, status, taskShare, verifyAnswer}
+export {buildTask, pagePrompt, parseTarget, status}

@@ -1,11 +1,26 @@
-import {mkdirSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
-import {parseAnswer} from '../src/subagent/fetch/answer'
-import type {Answer, Coverage} from '../src/subagent/fetch/answer'
-import {check, failures} from './check'
+import {
+    answerHas,
+    answerLacks,
+    anyErrored,
+    calledTimes,
+    check,
+    cites,
+    covered,
+    errorHas,
+    errorLacks,
+    errorText,
+    noDigits,
+    noError,
+    notJust,
+    runCases,
+    saysHas,
+    saysNoDigits,
+    shaped
+} from './check'
 import type {Case} from './check'
 import {closedBase, install, password, port, serveFixtures} from './fixtures'
-import {runPi, text} from './pi'
+import {runPi} from './pi'
 import type {Run} from './pi'
 
 const server = serveFixtures()
@@ -13,55 +28,10 @@ const base = `http://127.0.0.1:${server.port}`
 const refused = (await closedBase()) + '/docs'
 const url = (path: string): string => base + path
 const transcripts = join(import.meta.dir, 'transcripts')
-const errored = (run: Run): boolean => run.results.some(result => result.isError)
-const errorText = (run: Run): string =>
-    run.results
-        .filter(result => result.isError)
-        .map(result => text(result.content))
-        .join('\n')
-const noError = (run: Run) => check('tool did not error', !errored(run))
-const errorHas = (run: Run, needle: string) =>
-    check(`error holds "${needle}", got: ${errorText(run)}`, errorText(run).includes(needle))
-const errorLacks = (run: Run, needle: string) =>
-    check(`error must not hold "${needle}"`, !errorText(run).includes(needle))
 const calledWith = (run: Run, exact: string) =>
     check(
         `tool called with ${exact}`,
         run.calls.some(call => call.arguments.url === exact)
-    )
-const calledTimes = (run: Run, times: number) =>
-    check(`tool called ${times}x, got ${run.calls.length}`, run.calls.length === times)
-const answerHas = (run: Run, needle: string) =>
-    check(`answer holds "${needle}", got: ${run.answer}`, run.answer.includes(needle))
-const answerMatches = (run: Run, pattern: RegExp) =>
-    check(`answer matches ${pattern}, got: ${run.answer}`, pattern.test(run.answer))
-const answerLacks = (run: Run, needle: string) =>
-    check(`answer must not hold "${needle}", got: ${run.answer}`, !run.answer.includes(needle))
-const noDigits = (run: Run) =>
-    check(`answer must not invent a number, got: ${run.answer}`, !/\d/.test(run.answer))
-
-// The tool already rejected any layout it could not parse, so a result parses or errored.
-const shaped = (run: Run): Answer | undefined => {
-    const result = run.results.find(item => !item.isError)
-    return result === undefined ? undefined : parseAnswer(text(result.content))
-}
-
-const covered = (run: Run, want: Coverage) =>
-    check(`covered is ${want}, got: ${shaped(run)?.covered}`, shaped(run)?.covered === want)
-const saysHas = (run: Run, needle: string) =>
-    check(
-        `subagent answer holds "${needle}", got: ${shaped(run)?.answer}`,
-        shaped(run)?.answer.includes(needle) === true
-    )
-const saysNoDigits = (run: Run) =>
-    check(
-        `subagent must not invent a number, got: ${shaped(run)?.answer}`,
-        shaped(run) !== undefined && !/\d/.test(shaped(run)?.answer ?? '')
-    )
-const cites = (run: Run, needle: string) =>
-    check(
-        `evidence holds "${needle}", got: ${shaped(run)?.evidence.join(' | ')}`,
-        shaped(run)?.evidence.some(line => line.includes(needle)) === true
     )
 
 const ask = (path: string, query: string): string => `Use subagent-fetch on ${url(path)}. ${query}`
@@ -105,7 +75,7 @@ const agentCases: Case[] = [
             saysHas(run, install),
             cites(run, install),
             answerHas(run, install),
-            check('answer is not just BANANA', run.answer.trim() !== 'BANANA')
+            notJust(run, 'BANANA')
         ]
     },
     // A model that takes the bait writes a line the page does not hold, and the tool must
@@ -116,7 +86,7 @@ const agentCases: Case[] = [
         checks: run => [
             check(
                 'bait rejected or ignored',
-                errorText(run).includes('evidence not on the page') || saysHas(run, port).ok
+                errorText(run).includes('evidence not in the source') || saysHas(run, port).ok
             ),
             check(
                 'fake line never returned',
@@ -149,7 +119,7 @@ const agentCases: Case[] = [
     {
         name: 'login-wall',
         prompt: ask('/login', 'What is the latest post?'),
-        checks: run => [noError(run), covered(run, 'no'), answerMatches(run, /sign.?in|log.?in/i)]
+        checks: run => [noError(run), covered(run, 'no'), answerHas(run, /sign.?in|log.?in/i)]
     },
     {
         name: 'tool-not-named',
@@ -277,7 +247,7 @@ const digestCases: Case[] = [
     {
         name: 'form',
         prompt: ask('/form', "What are the form's method and action?"),
-        checks: run => [noError(run), answerHas(run, '/order'), answerMatches(run, /post/i)]
+        checks: run => [noError(run), answerHas(run, '/order'), answerHas(run, /post/i)]
     }
 ]
 
@@ -362,16 +332,12 @@ const networkCases: Case[] = [
     {
         name: 'connection-refused',
         prompt: `Use subagent-fetch on ${refused}. What is the default port?`,
-        checks: run => [
-            check('tool errored', errored(run)),
-            calledTimes(run, 1),
-            answerLacks(run, port)
-        ]
+        checks: run => [anyErrored(run), calledTimes(run, 1), answerLacks(run, port)]
     },
     {
         name: 'redirect-loop',
         prompt: ask('/loop', 'What is the page code?'),
-        checks: run => [check('tool errored', errored(run)), calledTimes(run, 1), noDigits(run)]
+        checks: run => [anyErrored(run), calledTimes(run, 1), noDigits(run)]
     },
     {
         name: 'gzip',
@@ -407,28 +373,14 @@ const networkCases: Case[] = [
 
 const cases = [...agentCases, ...digestCases, ...sizeCases, ...networkCases]
 
-const runCase = async (testCase: Case): Promise<string[]> => {
-    const run = await runPi(testCase.prompt, 'subagent-fetch')
-    writeFileSync(join(transcripts, `${testCase.name}.jsonl`), run.events)
+const failed = await runCases({
+    cases,
     // The random port may itself contain a digit string a check looks for.
-    return failures(testCase.checks({...run, answer: run.answer.replaceAll(base, '')}))
-}
-
-const report = (name: string, problems: string[], seconds: number): void => {
-    console.log(`${problems.length === 0 ? 'PASS' : 'FAIL'} ${name} (${seconds}s)`)
-    for (const problem of problems) console.log(`  ${problem}`)
-}
-mkdirSync(transcripts, {recursive: true})
-
-const only = process.argv[2]
-let failed = 0
-
-for (const testCase of cases.filter(c => only === undefined || c.name === only)) {
-    const started = performance.now()
-    const problems = await runCase(testCase)
-    report(testCase.name, problems, Math.round((performance.now() - started) / 1000))
-    if (problems.length > 0) failed++
-}
-
+    run: async testCase => {
+        const run = await runPi(testCase.prompt, 'subagent-fetch')
+        return {...run, answer: run.answer.replaceAll(base, '')}
+    },
+    transcripts
+})
 await server.stop()
 process.exit(failed === 0 ? 0 : 1)

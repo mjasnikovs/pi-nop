@@ -116,6 +116,10 @@ describe('panelItems', () => {
             ['header:subagent-fetch', '<SUBAGENT-FETCH>', ''],
             ['subagent-fetch.model', 'model', 'acme/slow'],
             ['subagent-fetch.thinkingLevel', 'thinking', 'high'],
+            ['gap:subagent-docs', '', ''],
+            ['header:subagent-docs', '<SUBAGENT-DOCS>', ''],
+            ['subagent-docs.model', 'model', 'inherit'],
+            ['subagent-docs.thinkingLevel', 'thinking', 'inherit'],
             ['gap:web-search', '', ''],
             ['header:web-search', '<WEB-SEARCH>', ''],
             ['web-search.engine', 'engine', 'exa'],
@@ -123,10 +127,10 @@ describe('panelItems', () => {
             ['header:concurrency', '<CONCURRENCY>', ''],
             ['concurrency', 'subagents at once', 'unlimited']
         ])
-        expect(items[9]?.values).toEqual(['exa', 'brave', 'ddg'])
-        expect(items[12]?.values).toEqual(['unlimited', '1', '2', '3', '4'])
-        expect(panelItems({concurrency: 3}, models)[12]?.currentValue).toBe('3')
-        expect(panelItems({'web-search': {engine: 'ddg'}}, models)[9]?.currentValue).toBe('ddg')
+        expect(items[13]?.values).toEqual(['exa', 'brave', 'ddg'])
+        expect(items[16]?.values).toEqual(['unlimited', '1', '2', '3', '4'])
+        expect(panelItems({concurrency: 3}, models)[16]?.currentValue).toBe('3')
+        expect(panelItems({'web-search': {engine: 'ddg'}}, models)[13]?.currentValue).toBe('ddg')
         expect(panelItems({}, models)[0]?.label).toBe('SUBAGENT')
         expect(items[2]?.values).toEqual([
             'inherit',
@@ -282,6 +286,8 @@ describe('nop-config command', () => {
                 + 'subagent.thinkingLevel: inherit\n'
                 + 'subagent-fetch.model: inherit\n'
                 + 'subagent-fetch.thinkingLevel: inherit\n'
+                + 'subagent-docs.model: inherit\n'
+                + 'subagent-docs.thinkingLevel: inherit\n'
                 + 'web-search.engine: exa\n'
                 + 'concurrency: unlimited',
             'info'
@@ -299,6 +305,8 @@ describe('nop-config command', () => {
                 + 'subagent.thinkingLevel: inherit\n'
                 + 'subagent-fetch.model: inherit\n'
                 + 'subagent-fetch.thinkingLevel: inherit\n'
+                + 'subagent-docs.model: inherit\n'
+                + 'subagent-docs.thinkingLevel: inherit\n'
                 + 'web-search.engine: exa\n'
                 + 'concurrency: unlimited'
         )
@@ -388,7 +396,7 @@ describe('nop-config command', () => {
         writeFileSync(configPath, '{"subagent":{"thinkingLevel":"low"}}')
 
         const {panel} = await openPanel()
-        for (let i = 0; i < 4; i += 1) panel.handleInput(down)
+        for (let i = 0; i < 6; i += 1) panel.handleInput(down)
         panel.handleInput(enter)
         expect(loadConfig()).toEqual({
             subagent: {thinkingLevel: 'low'},
@@ -405,7 +413,7 @@ describe('nop-config command', () => {
 
     test('the concurrency row cycles through the levels and back to unlimited', async () => {
         const {panel} = await openPanel()
-        for (let i = 0; i < 5; i += 1) panel.handleInput(down)
+        for (let i = 0; i < 7; i += 1) panel.handleInput(down)
         panel.handleInput(enter)
         expect(loadConfig()).toEqual({concurrency: 1})
 

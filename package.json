@@ -16,7 +16,8 @@
         "lint:check": "prettier --check '{src,test,eval}/**/*.ts' && eslint . --max-warnings 0 && tsc --noEmit",
         "prepublishOnly": "bun run build",
         "eval": "bun eval/fetch.eval.ts",
-        "eval:search": "bun eval/search.eval.ts"
+        "eval:search": "bun eval/search.eval.ts",
+        "eval:docs": "bun eval/docs.eval.ts"
     },
     "dependencies": {
         "@mozilla/readability": "0.6.0",

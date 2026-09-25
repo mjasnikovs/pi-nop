@@ -370,7 +370,7 @@ describe('subagent tui', () => {
         expect(out[1]).toBe('  Checking auth')
     })
 
-    test('a tool-only first turn falls back to starting', () => {
+    test('a tool-only turn shows working', () => {
         const out = lines(
             renderResult(
                 {content: [{type: 'text', text: ''}], details: details({lastAssistantText: ''})},
@@ -379,7 +379,7 @@ describe('subagent tui', () => {
                 makeContext() as never
             )
         )
-        expect(out[1]).toBe('  starting…')
+        expect(out[1]).toBe('  working…')
     })
 
     test('a missing task still renders the header', () => {

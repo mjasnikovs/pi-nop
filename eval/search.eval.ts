@@ -1,34 +1,19 @@
-import {mkdirSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {engines} from '../src/config/config'
 import type {EngineName} from '../src/config/config'
 import {braveKey} from '../src/search/brave'
 import {endpointOverride} from '../src/search/engines'
 import {engineOverride} from '../src/search/search'
-import {check, failures} from './check'
+import {check, errorHas, noError, resultText, runCases} from './check'
 import type {Case} from './check'
 import {port, searchKey, serveFixtures} from './fixtures'
-import {runPi, text} from './pi'
+import {runPi} from './pi'
 import type {Run} from './pi'
 
 const server = serveFixtures()
 const base = `http://127.0.0.1:${server.port}`
 const url = (path: string): string => base + path
 const transcripts = join(import.meta.dir, 'transcripts', 'search')
-const errored = (run: Run): boolean => run.results.some(result => result.isError)
-const errorText = (run: Run): string =>
-    run.results
-        .filter(result => result.isError)
-        .map(result => text(result.content))
-        .join('\n')
-const resultText = (run: Run): string =>
-    run.results
-        .filter(result => !result.isError)
-        .map(result => text(result.content))
-        .join('\n')
-const noError = (run: Run) => check(`tool did not error, got: ${errorText(run)}`, !errored(run))
-const errorHas = (run: Run, needle: string) =>
-    check(`error holds "${needle}", got: ${errorText(run)}`, errorText(run).includes(needle))
 const searched = (run: Run, times: number) =>
     check(
         `web-search called ${times}x, got ${run.calls.length}`,
@@ -134,39 +119,18 @@ const envFor = (engine: EngineName, name: string): Record<string, string> => ({
     [braveKey]: name === 'bad-key' ? 'wrong' : searchKey
 })
 
-const runCase = async (engine: EngineName, testCase: SearchCase): Promise<string[]> => {
-    const run = await runPi(
-        testCase.prompt,
-        testCase.tools ?? 'web-search',
-        envFor(engine, testCase.name)
-    )
-    writeFileSync(join(transcripts, `${engine}-${testCase.name}.jsonl`), run.events)
-    return failures(testCase.checks(run))
-}
-
-const report = (name: string, problems: string[], seconds: number): void => {
-    console.log(`${problems.length === 0 ? 'PASS' : 'FAIL'} ${name} (${seconds}s)`)
-    for (const problem of problems) console.log(`  ${problem}`)
-}
-mkdirSync(transcripts, {recursive: true})
-
-const only = process.argv[2]
 let failed = 0
 
-for (const engine of engines) {
-    const cases = [...commonCases, ...engineCases[engine]]
-
-    for (const testCase of cases.filter(c => only === undefined || c.name === only)) {
-        const started = performance.now()
-        const problems = await runCase(engine, testCase)
-        report(
-            `${engine} ${testCase.name}`,
-            problems,
-            Math.round((performance.now() - started) / 1000)
-        )
-        if (problems.length > 0) failed++
-    }
-}
+for (const engine of engines)
+    failed += await runCases<SearchCase>({
+        cases: [...commonCases, ...engineCases[engine]],
+        run: testCase =>
+            runPi(testCase.prompt, testCase.tools ?? 'web-search', {
+                env: envFor(engine, testCase.name)
+            }),
+        transcripts,
+        label: testCase => `${engine}-${testCase.name}`
+    })
 
 await server.stop()
 process.exit(failed === 0 ? 0 : 1)

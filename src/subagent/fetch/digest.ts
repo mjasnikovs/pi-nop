@@ -4,7 +4,7 @@ import {parseHTML} from 'linkedom'
 import TurndownService from 'turndown'
 import {tables} from 'turndown-plugin-gfm'
 
-import {SubagentErrors} from '../subagent'
+import {FetchErrors} from './errors'
 
 enum ContentKind {
     Html,
@@ -304,7 +304,7 @@ const readBody = async (response: Response): Promise<Uint8Array> => {
         size += chunk.byteLength
 
         if (size > maxBytes)
-            throw new Error(SubagentErrors.FetchFailed + `page over ${formatSize(maxBytes)}`)
+            throw new Error(FetchErrors.Failed + `page over ${formatSize(maxBytes)}`)
         chunks.push(chunk)
     }
 
@@ -312,7 +312,7 @@ const readBody = async (response: Response): Promise<Uint8Array> => {
 }
 
 const unsupported = (contentType: string): Error =>
-    new Error(SubagentErrors.FetchFailed + `unsupported content type ${contentType}`)
+    new Error(FetchErrors.Failed + `unsupported content type ${contentType}`)
 
 const digest = async (response: Response): Promise<Digest> => {
     const contentType = response.headers.get('content-type') ?? ''
@@ -330,7 +330,7 @@ const digest = async (response: Response): Promise<Digest> => {
     const body = decodeBody(bytes, contentType, kind)
     const page = kind === ContentKind.Html ? htmlToMarkdown(body) : {text: body.trim()}
 
-    if (page.text === '') throw new Error(SubagentErrors.FetchFailed + 'page has no readable text')
+    if (page.text === '') throw new Error(FetchErrors.Failed + 'page has no readable text')
     return page
 }
 

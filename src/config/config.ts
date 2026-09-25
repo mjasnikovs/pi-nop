@@ -8,7 +8,7 @@ import {type Static, Type} from 'typebox'
 import Value from 'typebox/value'
 
 const configFile = 'pi-nop.json'
-const tools = ['subagent', 'subagent-fetch'] as const
+const tools = ['subagent', 'subagent-fetch', 'subagent-docs'] as const
 const thinkingLevels = [
     'off',
     'minimal',
@@ -40,6 +40,7 @@ const configSchema = Type.Object(
     {
         subagent: Type.Optional(toolSchema),
         'subagent-fetch': Type.Optional(toolSchema),
+        'subagent-docs': Type.Optional(toolSchema),
         [searchTool]: Type.Optional(searchSchema),
         [concurrencyKey]: Type.Optional(concurrencySchema)
     },

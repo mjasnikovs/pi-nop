@@ -23,6 +23,7 @@ const options = {
 } as Partial<SubagentOptions>
 const configuredOptions = mock((_nop: unknown, _ctx: ExtensionContext, _tool: string) => options)
 const {SubagentErrors} = await import('../../../src/subagent/subagent')
+const {FetchErrors} = await import('../../../src/subagent/fetch/errors')
 await mock.module('../../../src/subagent/subagent', () => ({
     runSubagent,
     configuredOptions,
@@ -43,8 +44,8 @@ afterAll(() => {
     mock.restore()
 })
 
-const {answerPrompt} = await import('../../../src/subagent/fetch/answer')
-const {buildTask, taskShare, default: register} = await import('../../../src/subagent/fetch/fetch')
+const {taskShare} = await import('../../../src/subagent/budget')
+const {buildTask, pagePrompt, default: register} = await import('../../../src/subagent/fetch/fetch')
 const registerTool = mock((_tool: FetchTool) => undefined)
 const pi = {registerTool} as unknown as ExtensionAPI
 const ctx = {cwd: '/cwd'} as unknown as ExtensionContext
@@ -80,7 +81,7 @@ describe('fetch tool', () => {
             buildTask('what', 'https://example.com/final', 'page'),
             signal,
             onUpdate,
-            {...options, prompt: answerPrompt, tools: []}
+            {...options, prompt: pagePrompt, tools: []}
         )
         expect(result).toEqual({
             content: [{type: 'text', text: answer}],
@@ -110,7 +111,7 @@ describe('fetch tool', () => {
         runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
-            'Subagent answer failed verification: evidence not on the page: made up | also fake'
+            'Subagent answer failed verification: evidence not in the source: made up | also fake'
         )
     })
 
@@ -171,7 +172,7 @@ describe('fetch tool', () => {
         )
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
-            SubagentErrors.PageTooBig
+            FetchErrors.PageTooBig
         )
         expect(runSubagent).not.toHaveBeenCalled()
     })
@@ -395,7 +396,7 @@ describe('fetch tool', () => {
         fetchMock.mockImplementation(() => Promise.resolve(page('日'.repeat(chars))))
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
-            SubagentErrors.PageTooBig
+            FetchErrors.PageTooBig
         )
     })
 

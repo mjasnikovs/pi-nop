@@ -1,4 +1,5 @@
-import {describe, parseTarget, status} from '../subagent/fetch/fetch'
+import {describe} from '../subagent/describe'
+import {parseTarget, status} from '../subagent/fetch/fetch'
 
 enum SearchErrors {
     Failed = 'Search failed: ',

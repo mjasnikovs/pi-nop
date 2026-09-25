@@ -1,0 +1,153 @@
+import {afterAll, describe, expect, mock, test} from 'bun:test'
+import {mkdirSync, writeFileSync} from 'node:fs'
+import {join} from 'node:path'
+
+import {agentDir, getAgentDir, useAgentDir} from '../../agentDir'
+
+const actual = await import('@earendil-works/pi-coding-agent')
+await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgentDir}))
+
+const {download, facts, packTarget, view} = await import('../../../src/subagent/docs/npm')
+
+// A registry of our own, serving packuments the way npm view reads them.
+const packument = (name: string, latest: string, versions: Record<string, object>) => ({
+    name,
+    'dist-tags': {latest, beta: '9.0.0-beta.1'},
+    versions: Object.fromEntries(
+        Object.entries(versions).map(([version, extra]) => [version, {name, version, ...extra}])
+    )
+})
+const docs: Record<string, object> = {
+    '/zod': packument('zod', '4.6.5', {'3.23.8': {}, '4.6.5': {}, '9.0.0-beta.1': {}}),
+    '/request': packument('request', '2.88.2', {
+        '2.88.2': {deprecated: 'request has been deprecated'}
+    }),
+    '/left-pad': packument('left-pad', '1.3.0', {'1.3.0': {}}),
+    '/@acme%2fsdk': packument('@acme/sdk', '1.0.0', {'1.0.0': {}})
+}
+let scopedHits = 0
+let mainHits = 0
+useAgentDir()
+const serveDocs = (onHit = () => undefined) =>
+    Bun.serve({
+        port: 0,
+        fetch: request => {
+            onHit()
+            const body = docs[new URL(request.url).pathname]
+            return body === undefined ? new Response('missing', {status: 404}) : Response.json(body)
+        }
+    })
+const main = serveDocs(() => {
+    mainHits++
+})
+const scoped = serveDocs(() => {
+    scopedHits++
+})
+process.env.npm_config_registry = `http://127.0.0.1:${main.port}/`
+process.env['npm_config_@acme:registry'] = `http://127.0.0.1:${scoped.port}/`
+const cwd = process.cwd()
+afterAll(() => {
+    delete process.env.npm_config_registry
+    delete process.env['npm_config_@acme:registry']
+    void main.stop()
+    void scoped.stop()
+})
+
+describe('view', () => {
+    test('resolves a version, a tag and a range to one version, with latest alongside', async () => {
+        expect(await view({name: 'zod', spec: '3.23.8'}, cwd)).toEqual({
+            version: '3.23.8',
+            deprecated: undefined,
+            latest: '4.6.5'
+        })
+        expect((await view({name: 'zod', spec: 'beta'}, cwd)).version).toBe('9.0.0-beta.1')
+        expect((await view({name: 'zod', spec: '^4'}, cwd)).version).toBe('4.6.5')
+    })
+
+    test('a missing package or version is "not on npm"', async () => {
+        await expect(view({name: 'nope', spec: 'latest'}, cwd)).rejects.toThrow(
+            'not on npm: nope@latest (E404)'
+        )
+        await expect(view({name: 'zod', spec: '99.0.0'}, cwd)).rejects.toThrow(
+            'not on npm: zod@99.0.0'
+        )
+    })
+
+    test('a scoped name goes through npm to its scope registry', async () => {
+        expect((await view({name: '@acme/sdk', spec: 'latest'}, cwd)).version).toBe('1.0.0')
+        expect(scopedHits).toBeGreaterThan(0)
+    })
+
+    test('an abort is reported as an abort', async () => {
+        const controller = new AbortController()
+        controller.abort()
+        await expect(view({name: 'zod', spec: 'latest'}, cwd, controller.signal)).rejects.toThrow(
+            'Subagent aborted'
+        )
+    })
+})
+
+describe('facts', () => {
+    test('latest and the deprecation of the version in hand', async () => {
+        expect(await facts('zod', '3.23.8', cwd)).toEqual({latest: '4.6.5', deprecated: undefined})
+        expect(await facts('request', '2.88.2', cwd)).toEqual({
+            latest: '2.88.2',
+            deprecated: 'request has been deprecated'
+        })
+        expect(await facts('zod', undefined, cwd)).toEqual({latest: '4.6.5', deprecated: undefined})
+    })
+
+    test('a version the registry never saw still leaves latest known; a missing package is an error', async () => {
+        expect(await facts('left-pad', '9.9.9', cwd)).toEqual({
+            latest: '1.3.0',
+            deprecated: undefined
+        })
+        expect(await facts('nope', '1.0.0', cwd)).toEqual({error: 'not on npm: nope@latest (E404)'})
+    })
+})
+
+describe('packTarget', () => {
+    test('an asked version wins, then the declared range, then latest', () => {
+        expect(packTarget('zod', {version: '3.0.0', range: '^4'})).toEqual({
+            name: 'zod',
+            spec: '3.0.0'
+        })
+        expect(packTarget('zod', {range: '^4'})).toEqual({name: 'zod', spec: '^4'})
+        expect(packTarget('zod', {})).toEqual({name: 'zod', spec: 'latest'})
+    })
+
+    test('an npm alias names its target, with or without a version; a range from outside the registry is refused', () => {
+        expect(packTarget('ms-alias', {range: 'npm:ms@2.1.3'})).toEqual({name: 'ms', spec: '2.1.3'})
+        expect(packTarget('ms-alias', {range: 'npm:ms@^2', version: '2.0.0'})).toEqual({
+            name: 'ms',
+            spec: '2.0.0'
+        })
+        expect(packTarget('ms-alias', {range: 'npm:@scope/ms'})).toEqual({
+            name: '@scope/ms',
+            spec: 'latest'
+        })
+
+        for (const range of ['workspace:*', 'file:../x', 'github:a/b', 'https://x/y.tgz']) {
+            expect(() => packTarget('zod', {range})).toThrow(
+                'declared from outside the registry: zod'
+            )
+            expect(() => packTarget('zod', {range, version: '2.0.0'})).toThrow(
+                'declared from outside the registry: zod'
+            )
+        }
+    })
+})
+
+describe('download', () => {
+    test('an exact version already in the cache costs no npm call', async () => {
+        const root = join(agentDir, 'cache', 'pi-nop-docs', 'zod@3.23.8')
+        mkdirSync(join(root, 'node_modules', 'zod'), {recursive: true})
+        writeFileSync(
+            join(root, 'node_modules', 'zod', 'package.json'),
+            '{"name":"zod","version":"3.23.8"}'
+        )
+        const before = mainHits
+        expect(await download('zod', {name: 'zod', spec: '3.23.8'}, cwd)).toBe(root)
+        expect(mainHits).toBe(before)
+    })
+})

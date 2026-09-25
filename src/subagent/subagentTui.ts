@@ -177,6 +177,10 @@ const firstText = (result: SubagentToolResult): string => {
     return part === undefined ? '' : part.text
 }
 
+// A turn of only tool calls has no text, but it proves the run is past starting.
+const idleMessage = (details: SubagentDetails | undefined): string =>
+    details === undefined ? 'starting…' : 'working…'
+
 const statusMessage = (
     details: SubagentDetails | undefined,
     phase: SubagentPhase,
@@ -184,7 +188,7 @@ const statusMessage = (
 ): string =>
     phase === 'error' ?
         oneLine(fallbackMessage) || oneLine(details?.lastAssistantText) || 'failed'
-    :   oneLine(details?.lastAssistantText) || oneLine(fallbackMessage) || 'starting…'
+    :   oneLine(details?.lastAssistantText) || oneLine(fallbackMessage) || idleMessage(details)
 
 const phaseFor = (
     options: ToolRenderResultOptions,
