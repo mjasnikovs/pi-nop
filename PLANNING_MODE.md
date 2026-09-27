@@ -306,7 +306,9 @@ If 13 to 20 hold, the model writes one field, `steps`, and the tool list is `ask
 
 Built 2026-09-27, third try. `/plan` opens a full-screen overlay panel, as `/nop-config` does.
 The main context stays idle, so no tool swap, rule injection or bash guard is needed. The goal
-comes from a read-only subagent run through `runSubagent`, one fresh run per request or change.
+comes from a read-only subagent session kept open while the panel is open. Each change is
+one more prompt in it, so files it read stay in its context. Close, hand over, a failed run and
+pi shutdown dispose it.
 The panel has a step strip, the goal, a subagent status line, a pi-tui Input that always takes
 typing, a pi-tui SelectList menu (Accept the goal, Send to main context, Close), and a hint
 line that names what Enter does right now. Empty input: Enter runs the highlighted row. Typed

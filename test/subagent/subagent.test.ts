@@ -16,12 +16,10 @@ type FakeMessage = Pick<
 
 type FakeSession = {
     messages: Array<FakeMessage | {role: 'user'}>
-    text: string | undefined
     onPrompt: () => Promise<void>
     prompt: ReturnType<typeof mock>
     abort: ReturnType<typeof mock>
     dispose: ReturnType<typeof mock>
-    getLastAssistantText: ReturnType<typeof mock>
     getSessionStats: ReturnType<typeof mock>
     subscribe: ReturnType<typeof mock>
     unsubscribe: ReturnType<typeof mock>
@@ -68,12 +66,14 @@ const makeSession = (): FakeSession => {
     const unsubscribe = mock(() => undefined)
     const session: FakeSession = {
         messages: [{role: 'user'}, assistant()],
-        text: 'hello',
         onPrompt: () => Promise.resolve(),
-        prompt: mock(() => session.onPrompt()),
+        // pi ends every prompt with a turn_end for the answer, so the fake does too.
+        prompt: mock(async () => {
+            await session.onPrompt()
+            session.emitAssistant()
+        }),
         abort: mock(() => Promise.resolve()),
         dispose: mock(() => undefined),
-        getLastAssistantText: mock(() => session.text),
         getSessionStats: mock(() => stats),
         subscribe: mock((listener: (event: {type: string}) => void) => {
             listeners.push(listener)
@@ -85,7 +85,7 @@ const makeSession = (): FakeSession => {
         },
         emitAssistant: () => {
             const last = session.messages.findLast(message => message.role === 'assistant')
-            session.emit({type: 'turn_end', message: last})
+            if (last !== undefined) session.emit({type: 'turn_end', message: last})
         }
     }
     return session
@@ -128,9 +128,9 @@ afterAll(() => {
 })
 
 const {
-    progressThrottleMs,
     registerSubagentTool,
     runSubagent,
+    subagentSession,
     default: register
 } = await import('../../src/subagent/subagent')
 useAgentDir()
@@ -245,56 +245,31 @@ describe('runSubagent', () => {
         expect(result.details.stopReason).toBe('stop')
     })
 
-    test('streams the text as it stood, one snapshot per throttle window', async () => {
+    test('sends one update per assistant turn', async () => {
         const seen: Array<SubagentDetails | undefined> = []
-        session.text = 'partial'
-
         session.onPrompt = () => {
+            session.messages = [assistant({content: [{type: 'text', text: 'partial'}]})]
             session.emitAssistant()
-            session.emit({type: 'tool_execution_end'})
-            session.text = 'hello'
-            session.emitAssistant()
+            session.messages = [assistant()]
             return Promise.resolve()
         }
 
         const result = await runSubagent('task', undefined, update => {
             seen.push(update.details)
         })
-        expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}])
+        expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}, expectedDetails])
         expect(result.details).toEqual(expectedDetails)
         expect(session.unsubscribe).toHaveBeenCalledTimes(1)
     })
 
-    test('streams again once the throttle window passes', async () => {
-        const seen: Array<SubagentDetails | undefined> = []
-        session.text = 'first'
-
-        session.onPrompt = () => {
-            session.emitAssistant()
-            session.emitAssistant()
-            clock += progressThrottleMs
-            session.text = 'second'
-            session.emitAssistant()
-            return Promise.resolve()
-        }
-
-        await runSubagent('task', undefined, update => {
-            seen.push(update.details)
-        })
-
-        expect(seen.map(details => details?.lastAssistantText)).toEqual(['first', 'second'])
-    })
-
     test('keeps the last text when a tool-only turn has none', async () => {
         const seen: Array<SubagentDetails | undefined> = []
-        session.text = 'checking'
-
         session.onPrompt = () => {
+            session.messages = [assistant({content: [{type: 'text', text: 'checking'}]})]
             session.emitAssistant()
-            clock += progressThrottleMs
-            session.text = undefined
+            session.messages = [assistant({content: [], stopReason: 'toolUse'})]
             session.emitAssistant()
-            session.text = 'hello'
+            session.messages = [assistant()]
             return Promise.resolve()
         }
 
@@ -302,7 +277,11 @@ describe('runSubagent', () => {
             seen.push(update.details)
         })
 
-        expect(seen.map(details => details?.lastAssistantText)).toEqual(['checking', 'checking'])
+        expect(seen.map(details => details?.lastAssistantText)).toEqual([
+            'checking',
+            'checking',
+            'hello'
+        ])
     })
 
     test('ignores turn_end for messages the subagent did not author', async () => {
@@ -317,7 +296,7 @@ describe('runSubagent', () => {
             seen.push(update.details)
         })
 
-        expect(seen).toHaveLength(0)
+        expect(seen).toEqual([expectedDetails])
     })
 
     test('measures elapsed from the start of the run', async () => {
@@ -332,7 +311,7 @@ describe('runSubagent', () => {
         const result = await runSubagent('task', undefined, update => {
             seen.push(update.details)
         })
-        expect(seen.map(details => details?.elapsedMs)).toEqual([250])
+        expect(seen.map(details => details?.elapsedMs)).toEqual([250, 1_250])
         expect(result.details.elapsedMs).toBe(1_250)
     })
 
@@ -436,7 +415,6 @@ describe('runSubagent', () => {
         await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
             'Empty model output'
         )
-        expect(session.getLastAssistantText).not.toHaveBeenCalled()
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
 
@@ -458,12 +436,124 @@ describe('runSubagent', () => {
     })
 
     test('throws when the assistant text is missing', async () => {
-        session.text = undefined
+        session.messages = [assistant({content: [{type: 'text', text: '  '}]})]
 
         await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
             'Empty model output'
         )
         expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('subagentSession', () => {
+    const answer = (text: string) => {
+        session.messages.push({role: 'user'}, assistant({content: [{type: 'text', text}]}))
+    }
+    test('two prompts share one pi session and keep it open', async () => {
+        const handle = subagentSession()
+        expect((await handle.prompt('one', undefined, noProgress)).text).toBe('hello')
+        answer('second')
+        expect((await handle.prompt('two', undefined, noProgress)).text).toBe('second')
+
+        expect(createAgentSession).toHaveBeenCalledTimes(1)
+        expect(session.prompt).toHaveBeenLastCalledWith('two', {expandPromptTemplates: false})
+        expect(session.dispose).not.toHaveBeenCalled()
+
+        handle.dispose()
+        handle.dispose()
+        expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    test('a prompt answers only from its own turns', async () => {
+        const handle = subagentSession()
+        await handle.prompt('one', undefined, noProgress)
+        session.prompt.mockImplementationOnce(() => Promise.resolve())
+
+        await expect(handle.prompt('two', undefined, noProgress)).rejects.toThrow(
+            'Empty model output'
+        )
+    })
+
+    test('an aborted prompt keeps the session for the next one', async () => {
+        const handle = subagentSession()
+        const controller = new AbortController()
+        session.onPrompt = () => {
+            controller.abort()
+            return Promise.resolve()
+        }
+
+        await expect(handle.prompt('one', controller.signal, noProgress)).rejects.toThrow(
+            'Subagent aborted'
+        )
+        session.onPrompt = () => Promise.resolve()
+        answer('after abort')
+
+        expect((await handle.prompt('two', undefined, noProgress)).text).toBe('after abort')
+        expect(session.abort).toHaveBeenCalledTimes(1)
+        expect(session.dispose).not.toHaveBeenCalled()
+        expect(createAgentSession).toHaveBeenCalledTimes(1)
+    })
+
+    test('a prompt after dispose throws', async () => {
+        const handle = subagentSession()
+        await handle.prompt('one', undefined, noProgress)
+        handle.dispose()
+
+        await expect(handle.prompt('two', undefined, noProgress)).rejects.toThrow(
+            'Subagent session was closed'
+        )
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+    })
+
+    test('a session that finishes building after dispose is disposed', async () => {
+        const handle = subagentSession()
+        onReload = () => {
+            handle.dispose()
+            return Promise.resolve()
+        }
+
+        await expect(handle.prompt('one', undefined, noProgress)).rejects.toThrow(
+            'Subagent session was closed'
+        )
+        expect(session.prompt).not.toHaveBeenCalled()
+        expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    test('compaction closes the session', async () => {
+        const handle = subagentSession()
+        session.onPrompt = () => {
+            session.emit({type: 'compaction_start'})
+            return Promise.resolve()
+        }
+
+        await expect(handle.prompt('one', undefined, noProgress)).rejects.toThrow(
+            'Subagent context was compacted'
+        )
+        expect(session.dispose).toHaveBeenCalledTimes(1)
+        await expect(handle.prompt('two', undefined, noProgress)).rejects.toThrow(
+            'Subagent session was closed'
+        )
+    })
+
+    test('a prompt waits for a slot like every other run', async () => {
+        saveConfig({concurrency: 1})
+        const held: Array<() => void> = []
+        session.onPrompt = () => new Promise<void>(resolve => held.push(resolve))
+        const handle = subagentSession()
+        const updates: unknown[] = []
+        const first = runSubagent('one', undefined, noProgress)
+        const second = handle.prompt('two', undefined, update => updates.push(update))
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(updates).toEqual([{content: [{type: 'text', text: 'queued…'}], details: undefined}])
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+
+        held.shift()?.()
+        await first
+        await new Promise(resolve => setTimeout(resolve, 0))
+        held.shift()?.()
+        await second
+        expect(session.prompt).toHaveBeenLastCalledWith('two', {expandPromptTemplates: false})
     })
 })
 
@@ -544,11 +634,6 @@ describe('extension', () => {
     test('forwards subagent progress to the tool update callback', async () => {
         const tool = registeredTool()
         const updates: Array<{text: string; task: string}> = []
-        session.onPrompt = () => {
-            session.emitAssistant()
-            return Promise.resolve()
-        }
-
         await tool.execute(
             'id',
             {task: 'find the bug'},

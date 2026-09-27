@@ -13,6 +13,7 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import type {AgentToolUpdateCallback, ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
+import {contentText} from '@earendil-works/pi-ai'
 import {type Static, type TObject, Type} from 'typebox'
 
 import {brokenConfig, findModel, loadConfig} from '../config/config'
@@ -26,7 +27,8 @@ enum SubagentErrors {
     RunFailed = 'Subagent run failed: ',
     NoModel = 'No model selected',
     Truncated = 'Subagent output cut off at the model output limit',
-    Compacted = 'Subagent context was compacted, so its answer would not rest on its source'
+    Compacted = 'Subagent context was compacted, so its answer would not rest on its source',
+    Disposed = 'Subagent session was closed'
 }
 
 enum SubagentTools {
@@ -58,15 +60,21 @@ type SubagentResult = {
 
 type SubagentUpdate = AgentToolUpdateCallback<SubagentDetails | undefined> | undefined
 
-const progressThrottleMs = 100
+type SubagentSession = {
+    prompt: (
+        task: string,
+        signal: AbortSignal | undefined,
+        onUpdate: SubagentUpdate
+    ) => Promise<SubagentResult>
+    dispose: () => void
+}
 
 // A cancelled call is reported as such, never as whatever failed underneath it.
 const unlessAborted = (signal: AbortSignal | undefined, error: unknown): void => {
     if (signal?.aborted) throw new Error(SubagentErrors.Aborted, {cause: error})
 }
 
-const lastAssistant = (session: AgentSession): AssistantMessage | undefined =>
-    session.messages.findLast(message => message.role === 'assistant')
+const turnText = (message: AssistantMessage): string => contentText(message.content, '').trim()
 
 const buildDetails = (
     stats: SessionStats,
@@ -91,14 +99,23 @@ const defaultOptions = (cwd: string): SubagentOptions => ({
     tools: [SubagentTools.Read, SubagentTools.Grep, SubagentTools.Find, SubagentTools.Ls]
 })
 
-const safeConfig = (ctx: ExtensionContext): NopConfig => {
+const readConfig = (): NopConfig | undefined => {
     try {
         return loadConfig()
     } catch {
-        ctx.ui.notify(brokenConfig, 'warning')
-        return {}
+        return undefined
     }
 }
+
+const safeConfig = (ctx: ExtensionContext): NopConfig => {
+    const config = readConfig()
+
+    if (config === undefined) ctx.ui.notify(brokenConfig, 'warning')
+    return config ?? {}
+}
+
+// Read on every prompt, so a session kept open still follows the current setting.
+const concurrencyCap = (): number => readConfig()?.concurrency ?? Number.POSITIVE_INFINITY
 
 const configuredOptions = (
     nop: NopConfig,
@@ -118,16 +135,7 @@ const configuredOptions = (
 const status = (onUpdate: SubagentUpdate, text: string): void =>
     onUpdate?.({content: [{type: 'text', text}], details: undefined})
 
-const runSubagent = async (
-    task: string,
-    signal: AbortSignal | undefined,
-    onUpdate: SubagentUpdate,
-    options: SubagentOptions = defaultOptions(process.cwd())
-): Promise<SubagentResult> => {
-    const startedAt = performance.now()
-
-    if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
-
+const buildSession = async (options: SubagentOptions): Promise<AgentSession> => {
     const settingsManager = SettingsManager.create(options.cwd, getAgentDir())
 
     const loader = new DefaultResourceLoader({
@@ -155,33 +163,35 @@ const runSubagent = async (
         thinkingLevel: options.thinkingLevel,
         model: options.model
     })
+    return session
+}
 
-    const onAbort = () => {
-        void session.abort()
-    }
-    signal?.addEventListener('abort', onAbort, {once: true})
+type TurnWatch = {
+    last?: AssistantMessage
+    compacted: boolean
+}
 
-    let progressedAt = 0
+const watchTurn = (
+    session: AgentSession,
+    task: string,
+    startedAt: number,
+    onUpdate: SubagentUpdate
+): {watch: TurnWatch; stop: () => void} => {
+    const watch: TurnWatch = {compacted: false}
     let lastText = ''
-    let compacted = false
-
-    const unsubscribe = session.subscribe(event => {
-        // Compaction is off above; this catches it coming back through a pi change.
+    const stop = session.subscribe(event => {
+        // Compaction is off in buildSession; this catches it coming back through a pi change.
         if (event.type === 'compaction_start') {
-            compacted = true
+            watch.compacted = true
             void session.abort()
             return
         }
 
         if (event.type !== 'turn_end' || event.message.role !== 'assistant') return
 
-        lastText = session.getLastAssistantText() ?? lastText
-
-        const now = performance.now()
-
-        if (now - progressedAt < progressThrottleMs) return
-
-        progressedAt = now
+        watch.last = event.message
+        const text = turnText(event.message)
+        if (text !== '') lastText = text
 
         const details = buildDetails(
             session.getSessionStats(),
@@ -192,33 +202,129 @@ const runSubagent = async (
         )
         onUpdate?.({content: [{type: 'text', text: lastText}], details})
     })
+    return {watch, stop}
+}
+
+const answerText = (last: AssistantMessage): string => {
+    const {stopReason, errorMessage} = last
+
+    if (stopReason === 'error' || stopReason === 'aborted')
+        throw new Error(SubagentErrors.RunFailed + (errorMessage ?? stopReason))
+    if (stopReason === 'length') throw new Error(SubagentErrors.Truncated)
+
+    const text = turnText(last)
+
+    if (text === '') throw new Error(SubagentErrors.EmptyOutput)
+    return text
+}
+
+// Every subagent run goes through prompt, so the slot cap covers all of them.
+const subagentSession = (
+    options: SubagentOptions = defaultOptions(process.cwd())
+): SubagentSession => {
+    let opening: Promise<AgentSession> | undefined
+    let session: AgentSession | undefined
+    let disposed = false
+
+    const dispose = (): void => {
+        if (disposed) return
+        disposed = true
+        session?.dispose()
+    }
+
+    const open = async (): Promise<AgentSession> => {
+        const built = await buildSession(options)
+
+        if (disposed) {
+            built.dispose()
+            throw new Error(SubagentErrors.Disposed)
+        }
+
+        session = built
+        return built
+    }
+
+    const turn = async (
+        task: string,
+        signal: AbortSignal | undefined,
+        onUpdate: SubagentUpdate
+    ): Promise<SubagentResult> => {
+        const startedAt = performance.now()
+
+        if (disposed) throw new Error(SubagentErrors.Disposed)
+        if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
+
+        opening ??= open()
+        const current = await opening
+
+        const onAbort = () => {
+            void current.abort()
+        }
+        signal?.addEventListener('abort', onAbort, {once: true})
+
+        const {watch, stop} = watchTurn(current, task, startedAt, onUpdate)
+
+        try {
+            if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
+
+            await current.prompt(task, {expandPromptTemplates: false})
+
+            if (disposed) throw new Error(SubagentErrors.Disposed)
+            if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
+
+            if (watch.compacted) {
+                dispose()
+                throw new Error(SubagentErrors.Compacted)
+            }
+
+            if (watch.last === undefined) throw new Error(SubagentErrors.EmptyOutput)
+
+            const text = answerText(watch.last)
+            return {
+                text,
+                details: buildDetails(current.getSessionStats(), task, watch.last, text, startedAt)
+            }
+        } finally {
+            signal?.removeEventListener('abort', onAbort)
+            stop()
+        }
+    }
+
+    const prompt = (
+        task: string,
+        signal: AbortSignal | undefined,
+        onUpdate: SubagentUpdate
+    ): Promise<SubagentResult> => {
+        let waited = false
+        slots.setCap(concurrencyCap())
+        return slots.run(
+            () => {
+                // Clears "queued…" so the row falls back to "starting…" while the session loads.
+                if (waited) status(onUpdate, '')
+                return turn(task, signal, onUpdate)
+            },
+            () => {
+                waited = true
+                status(onUpdate, queued)
+            }
+        )
+    }
+
+    return {prompt, dispose}
+}
+
+const runSubagent = async (
+    task: string,
+    signal: AbortSignal | undefined,
+    onUpdate: SubagentUpdate,
+    options: SubagentOptions = defaultOptions(process.cwd())
+): Promise<SubagentResult> => {
+    const handle = subagentSession(options)
 
     try {
-        if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
-
-        await session.prompt(task, {expandPromptTemplates: false})
-
-        if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
-        if (compacted) throw new Error(SubagentErrors.Compacted)
-
-        const last = lastAssistant(session)
-
-        if (last === undefined) throw new Error(SubagentErrors.EmptyOutput)
-
-        const {stopReason, errorMessage} = last
-
-        if (stopReason === 'error' || stopReason === 'aborted')
-            throw new Error(SubagentErrors.RunFailed + (errorMessage ?? stopReason))
-        if (stopReason === 'length') throw new Error(SubagentErrors.Truncated)
-
-        const text = session.getLastAssistantText()
-
-        if (text === undefined) throw new Error(SubagentErrors.EmptyOutput)
-        return {text, details: buildDetails(session.getSessionStats(), task, last, text, startedAt)}
+        return await handle.prompt(task, signal, onUpdate)
     } finally {
-        signal?.removeEventListener('abort', onAbort)
-        unsubscribe()
-        session.dispose()
+        handle.dispose()
     }
 }
 
@@ -259,19 +365,7 @@ const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: Subagen
                 signal,
                 configuredOptions(nop, ctx, spec.name)
             )
-            let waited = false
-            slots.setCap(nop.concurrency ?? Number.POSITIVE_INFINITY)
-            const {text, details} = await slots.run(
-                () => {
-                    // Clears "queued…" so the row falls back to "starting…" while the session loads.
-                    if (waited) status(onUpdate, '')
-                    return runSubagent(task, signal, onUpdate, options)
-                },
-                () => {
-                    waited = true
-                    status(onUpdate, queued)
-                }
-            )
+            const {text, details} = await runSubagent(task, signal, onUpdate, options)
 
             if (failure !== undefined) throw new Error(failure(text))
             return {
@@ -317,11 +411,11 @@ export default function (pi: ExtensionAPI) {
 
 export {
     configuredOptions,
-    progressThrottleMs,
     registerSubagentTool,
     runSubagent,
     safeConfig,
     SubagentErrors,
+    subagentSession,
     unlessAborted
 }
-export type {SubagentDetails, SubagentOptions, SubagentToolSpec, SubagentUpdate}
+export type {SubagentDetails, SubagentOptions, SubagentSession, SubagentToolSpec, SubagentUpdate}

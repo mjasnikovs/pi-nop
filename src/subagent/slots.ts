@@ -36,7 +36,7 @@ const createSlots = (): Slots => {
     }
 }
 
-// One gate for every subagent run, so a local model server sees at most `cap` sessions at once.
+// One gate for every subagent run, so a local model server sees at most `cap` runs at once.
 const slots = createSlots()
 
 export {createSlots, slots}

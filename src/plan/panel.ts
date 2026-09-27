@@ -1,4 +1,5 @@
 import type {Theme} from '@earendil-works/pi-coding-agent'
+import {getSelectListTheme} from '@earendil-works/pi-coding-agent'
 import type {SelectItem, SelectListTheme} from '@earendil-works/pi-tui'
 import {Input, Key, matchesKey, SelectList, wrapTextWithAnsi} from '@earendil-works/pi-tui'
 
@@ -44,14 +45,13 @@ const stepStrip = (theme: Theme, current: number): string =>
         })
         .join(theme.fg('dim', '   '))
 
-// While the user types, Enter belongs to the input, so the list shows no cursor.
-const listTheme = (theme: Theme, active: boolean): SelectListTheme => ({
-    selectedPrefix: text => (active ? theme.fg('accent', text) : ' '.repeat(text.length)),
-    selectedText: text => (active ? theme.fg('accent', text) : text),
-    description: text => theme.fg('muted', text),
-    scrollInfo: text => theme.fg('muted', text),
-    noMatch: text => theme.fg('muted', text)
-})
+// While the user types, Enter belongs to the input, so the selected row loses its highlight.
+const listTheme = (active: boolean): SelectListTheme => {
+    const theme = getSelectListTheme()
+
+    if (active) return theme
+    return {...theme, selectedText: text => text}
+}
 
 const body = (theme: Theme, state: PanelState, width: number): string[] => {
     if (state.goal === undefined) return [theme.fg('dim', 'Type what you want done.')]
@@ -82,10 +82,7 @@ class PlanPanel implements Focusable {
 
     render(width: number): string[] {
         const {theme, state} = this
-        const status =
-            state.running ? [this.spinnerLine(width)]
-            : state.error === undefined ? []
-            : wrapTextWithAnsi(theme.fg('error', state.error), width)
+        const status = this.status(width)
         const menu = this.menu(width)
 
         return [
@@ -141,11 +138,7 @@ class PlanPanel implements Focusable {
 
         if (items.length === 0) return []
 
-        const list = new SelectList(
-            items,
-            maxRows,
-            listTheme(this.theme, this.input.getValue() === '')
-        )
+        const list = new SelectList(items, maxRows, listTheme(this.input.getValue() === ''))
         list.setSelectedIndex(this.selected)
         return list.render(width)
     }
@@ -153,17 +146,27 @@ class PlanPanel implements Focusable {
     private hints(): string {
         const {theme, state} = this
         const menu = menuFor(state)
-        const keys =
-            state.running ? ['esc close']
-            : this.input.getValue() !== '' ? ['enter sends', 'esc clears']
-            : menu.length === 0 ? ['type your request', 'enter sends', 'esc close']
-            : [
-                    'type to change',
-                    '↑↓ pick',
-                    `enter ${(menu[this.selected]?.label ?? '').toLowerCase()}`
-                ]
 
-        return theme.fg('muted', keys.join('  ·  '))
+        return theme.fg('muted', this.hintKeys(menu).join('  ·  '))
+    }
+
+    private hintKeys(menu: SelectItem[]): string[] {
+        if (this.state.running) return ['esc close']
+        if (this.input.getValue() !== '') return ['enter sends', 'esc clears']
+        if (menu.length === 0) return ['type your request', 'enter sends', 'esc close']
+        return [
+            'type to change',
+            '↑↓ pick',
+            `enter ${(menu[this.selected]?.label ?? '').toLowerCase()}`
+        ]
+    }
+
+    private status(width: number): string[] {
+        const {theme, state} = this
+
+        if (state.running) return [this.spinnerLine(width)]
+        if (state.error === undefined) return []
+        return wrapTextWithAnsi(theme.fg('error', state.error), width)
     }
 
     private spinnerLine(width: number): string {

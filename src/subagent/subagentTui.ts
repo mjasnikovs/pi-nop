@@ -314,6 +314,7 @@ export {
     CallSlot,
     clockIcon,
     idleTicks,
+    oneLine,
     queued,
     renderCall,
     renderResult,

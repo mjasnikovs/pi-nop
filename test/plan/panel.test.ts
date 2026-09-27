@@ -2,8 +2,22 @@ import {beforeEach, describe, expect, mock, test} from 'bun:test'
 import type {Theme} from '@earendil-works/pi-coding-agent'
 import {visibleWidth} from '@earendil-works/pi-tui'
 
-import {PlanPanel, rows} from '../../src/plan/panel'
-import type {PanelState} from '../../src/plan/panel'
+import type {PanelState, PlanPanel as Panel} from '../../src/plan/panel'
+
+const plain = (text: string) => text
+const actual = await import('@earendil-works/pi-coding-agent')
+await mock.module('@earendil-works/pi-coding-agent', () => ({
+    ...actual,
+    getSelectListTheme: () => ({
+        selectedPrefix: plain,
+        selectedText: (text: string) => text.replace(/→ (.*)/, '→ <$1>'),
+        description: plain,
+        scrollInfo: plain,
+        noMatch: plain
+    })
+}))
+
+const {PlanPanel, rows} = await import('../../src/plan/panel')
 
 const theme = {
     fg: (_color: string, text: string) => text,
@@ -26,12 +40,12 @@ const state = (over: Partial<PanelState> = {}): PanelState => ({
     ...over
 })
 
-const type = (panel: PlanPanel, text: string) => {
+const type = (panel: Panel, text: string) => {
     for (const char of text) panel.handleInput(char)
 }
 
-const hint = (panel: PlanPanel) => panel.render(width).at(-1)
-let panel: PlanPanel
+const hint = (panel: Panel) => panel.render(width).at(-1)
+let panel: Panel
 beforeEach(() => {
     for (const fn of [change, accept, handOver, close, repaint]) fn.mockClear()
     panel = new PlanPanel(theme, repaint, {change, accept, handOver, close})
@@ -104,6 +118,23 @@ describe('PlanPanel', () => {
         expect(accept).not.toHaveBeenCalled()
         expect(handOver).not.toHaveBeenCalled()
         expect(change).toHaveBeenCalledWith('more')
+    })
+
+    test('typed text drops the highlight from the selected row', () => {
+        panel.setState(state({goal: 'Fix the typo.'}))
+        const highlighted = panel.render(width).join('\n')
+        type(panel, 'more')
+
+        expect(highlighted).toContain(`<${rows.accept.label}>`)
+        expect(panel.render(width).join('\n')).not.toContain(`<${rows.accept.label}>`)
+    })
+
+    test('invalidate keeps the typed text', () => {
+        panel.setState(state())
+        type(panel, 'fix it')
+        panel.invalidate()
+
+        expect(panel.render(width).join('\n')).toContain('fix it')
     })
 
     test('accepted goal moves the strip and leads with hand over', () => {

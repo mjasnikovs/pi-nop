@@ -1,46 +1,40 @@
 import {afterAll, describe, expect, mock, test} from 'bun:test'
-import {mkdirSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 
 import {agentDir, getAgentDir, useAgentDir} from '../../agentDir'
+import {packument, serveRegistry, tarball, tarballPath} from './registry'
+import type {Packument} from './registry'
 
 const actual = await import('@earendil-works/pi-coding-agent')
 await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgentDir}))
 
-const {download, facts, packTarget, view} = await import('../../../src/subagent/docs/npm')
+const {download, facts, packTarget, resolveVersion, view} =
+    await import('../../../src/subagent/docs/npm')
 
-// A registry of our own, serving packuments the way npm view reads them.
-const packument = (name: string, latest: string, versions: Record<string, object>) => ({
-    name,
-    'dist-tags': {latest, beta: '9.0.0-beta.1'},
-    versions: Object.fromEntries(
-        Object.entries(versions).map(([version, extra]) => [version, {name, version, ...extra}])
-    )
-})
-const docs: Record<string, object> = {
+const docs: Record<string, Packument> = {
     '/zod': packument('zod', '4.6.5', {'3.23.8': {}, '4.6.5': {}, '9.0.0-beta.1': {}}),
     '/request': packument('request', '2.88.2', {
         '2.88.2': {deprecated: 'request has been deprecated'}
     }),
     '/left-pad': packument('left-pad', '1.3.0', {'1.3.0': {}}),
+    '/broken': packument('broken', '1.0.0', {'1.0.0': {}}),
     '/@acme%2fsdk': packument('@acme/sdk', '1.0.0', {'1.0.0': {}})
+}
+const tarballs = {
+    [tarballPath('left-pad', '1.3.0')]: tarball({
+        'package.json': {name: 'left-pad', version: '1.3.0'},
+        'index.js': 'module.exports = pad'
+    }),
+    [tarballPath('broken', '1.0.0')]: new TextEncoder().encode('not a tarball')
 }
 let scopedHits = 0
 let mainHits = 0
 useAgentDir()
-const serveDocs = (onHit = () => undefined) =>
-    Bun.serve({
-        port: 0,
-        fetch: request => {
-            onHit()
-            const body = docs[new URL(request.url).pathname]
-            return body === undefined ? new Response('missing', {status: 404}) : Response.json(body)
-        }
-    })
-const main = serveDocs(() => {
+const main = serveRegistry(docs, tarballs, () => {
     mainHits++
 })
-const scoped = serveDocs(() => {
+const scoped = serveRegistry(docs, tarballs, () => {
     scopedHits++
 })
 process.env.npm_config_registry = `http://127.0.0.1:${main.port}/`
@@ -106,6 +100,16 @@ describe('facts', () => {
     })
 })
 
+describe('resolveVersion', () => {
+    test('a tag becomes the version it names; a version, a range or nothing is left alone', async () => {
+        expect(await resolveVersion('zod', {version: 'beta'}, cwd)).toEqual({
+            version: '9.0.0-beta.1'
+        })
+        for (const wanted of [{}, {version: '3.23.8'}, {version: '^4'}])
+            expect(await resolveVersion('zod', wanted, cwd)).toEqual(wanted)
+    })
+})
+
 describe('packTarget', () => {
     test('an asked version wins, then the declared range, then latest', () => {
         expect(packTarget('zod', {version: '3.0.0', range: '^4'})).toEqual({
@@ -149,5 +153,49 @@ describe('download', () => {
         const before = mainHits
         expect(await download('zod', {name: 'zod', spec: '3.23.8'}, cwd)).toBe(root)
         expect(mainHits).toBe(before)
+    })
+
+    const cache = join(agentDir, 'cache', 'pi-nop-docs')
+    const scratchLeft = () => readdirSync(cache).filter(name => name.startsWith('pack-'))
+    test('a tag is looked up and unpacked under its exact version, then served from the cache', async () => {
+        const root = await download('left-pad', {name: 'left-pad', spec: 'latest'}, cwd)
+        expect(root).toBe(join(cache, 'left-pad@1.3.0'))
+        expect(readFileSync(join(root, 'node_modules', 'left-pad', 'index.js'), 'utf8')).toBe(
+            'module.exports = pad'
+        )
+        expect(scratchLeft()).toEqual([])
+        const before = mainHits
+        expect(await download('left-pad', {name: 'left-pad', spec: '1.3.0'}, cwd)).toBe(root)
+        expect(mainHits).toBe(before)
+    })
+
+    test('an alias is unpacked under the asked name and keyed by both names', async () => {
+        const root = await download('pad-alias', {name: 'left-pad', spec: '1.3.0'}, cwd)
+        expect(root).toBe(join(cache, 'pad-alias=left-pad@1.3.0'))
+        expect(existsSync(join(root, 'node_modules', 'pad-alias', 'index.js'))).toBe(true)
+    })
+
+    test('a range goes straight to npm pack, and a tree already in place is kept', async () => {
+        const root = join(cache, 'left-pad@1.3.0')
+        mkdirSync(join(root, 'node_modules', 'left-pad'), {recursive: true})
+        writeFileSync(join(root, 'first'), '')
+        expect(await download('left-pad', {name: 'left-pad', spec: '^1'}, cwd)).toBe(root)
+        expect(existsSync(join(root, 'first'))).toBe(true)
+        expect(scratchLeft()).toEqual([])
+    })
+
+    test('a lost move with nothing in its place fails and leaves no scratch behind', async () => {
+        mkdirSync(cache, {recursive: true})
+        symlinkSync(join(cache, 'nowhere'), join(cache, 'gone=left-pad@1.3.0'))
+        await expect(download('gone', {name: 'left-pad', spec: '1.3.0'}, cwd)).rejects.toThrow(
+            'ENOTDIR'
+        )
+        expect(scratchLeft()).toEqual([])
+    })
+
+    test('a tarball tar cannot read fails and leaves no scratch behind', async () => {
+        await expect(download('broken', {name: 'broken', spec: '1.0.0'}, cwd)).rejects.toThrow()
+        expect(existsSync(join(cache, 'broken@1.0.0'))).toBe(false)
+        expect(scratchLeft()).toEqual([])
     })
 })

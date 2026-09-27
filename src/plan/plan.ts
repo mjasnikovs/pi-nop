@@ -1,7 +1,15 @@
-import type {ExtensionAPI, ExtensionContext} from '@earendil-works/pi-coding-agent'
+import type {
+    CustomEntry,
+    ExtensionAPI,
+    ExtensionContext,
+    SessionEntry
+} from '@earendil-works/pi-coding-agent'
+import {contentText} from '@earendil-works/pi-ai'
 
 import {boxed} from '../config/box'
-import {configuredOptions, runSubagent, safeConfig} from '../subagent/subagent'
+import {configuredOptions, safeConfig, subagentSession} from '../subagent/subagent'
+import type {SubagentSession} from '../subagent/subagent'
+import {oneLine} from '../subagent/subagentTui'
 import {goalPrompt, goalTask, parseGoal} from './goal'
 import {PlanPanel} from './panel'
 import type {PanelState} from './panel'
@@ -19,36 +27,42 @@ type PlanState = {
 }
 
 const idle: PlanState = {accepted: false}
-const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+const isPlanEntry = (entry: SessionEntry): entry is CustomEntry<PlanState> =>
+    entry.type === 'custom' && entry.customType === entryType
 
 const lastState = (ctx: ExtensionContext): PlanState | undefined =>
     ctx.sessionManager
-        .getEntries()
-        .filter(entry => entry.type === 'custom' && entry.customType === entryType)
-        .map(entry => (entry as {data?: PlanState}).data)
-        .findLast(data => data !== undefined)
+        .getBranch()
+        .filter(isPlanEntry)
+        .findLast(entry => entry.data !== undefined)?.data
 
 export default function (pi: ExtensionAPI) {
     let state = idle
     let run: AbortController | undefined
-    let show: (panel: PanelState) => void = () => undefined
+    let subagent: {session: SubagentSession; knowsGoal: boolean} | undefined
+    let show: ((panel: PanelState) => void) | undefined
 
     const save = (next: PlanState): void => {
         state = next
         pi.appendEntry(entryType, state)
     }
 
+    const closeSubagent = (): void => {
+        run?.abort()
+        subagent?.session.dispose()
+        subagent = undefined
+    }
+
+    const taskFor = (text: string): string => {
+        if (state.request === undefined) return goalTask({request: text})
+        if (subagent?.knowsGoal === true) return goalTask({change: text})
+        return goalTask({request: state.request, goal: state.goal, change: text})
+    }
+
     const refine = async (ctx: ExtensionContext, text: string): Promise<void> => {
         const request = state.request ?? text
-        const task = goalTask({
-            request,
-            goal: state.goal,
-            change: state.request === undefined ? undefined : text
-        })
-        const options = {
-            ...configuredOptions(safeConfig(ctx), ctx, 'subagent'),
-            prompt: goalPrompt
-        }
+        const task = taskFor(text)
         const panel = (running: boolean, status = '', error?: string): PanelState => ({
             goal: state.goal,
             accepted: false,
@@ -56,45 +70,51 @@ export default function (pi: ExtensionAPI) {
             status,
             error
         })
+        subagent ??= {
+            session: subagentSession({
+                ...configuredOptions(safeConfig(ctx), ctx, 'subagent'),
+                prompt: goalPrompt
+            }),
+            knowsGoal: false
+        }
+        const current = subagent
         run?.abort()
-        run = new AbortController()
-        show(panel(true))
+        const controller = new AbortController()
+        run = controller
+        show?.(panel(true))
 
         try {
-            const {text: answer} = await runSubagent(
-                task,
-                run.signal,
-                update => show(panel(true, oneLine(update.details?.lastAssistantText ?? ''))),
-                options
+            const {text: answer} = await current.session.prompt(task, controller.signal, update =>
+                show?.(panel(true, oneLine(contentText(update.content))))
             )
             const goal = parseGoal(answer)
 
             if (goal === undefined) {
-                show(panel(false, '', noGoalLine))
+                // The session's last reply is not the shown goal, so the next change resends it.
+                current.knowsGoal = false
+                show?.(panel(false, '', noGoalLine))
                 return
             }
 
+            current.knowsGoal = true
+
             save({request, goal, accepted: false})
-            show(panel(false))
+            show?.(panel(false))
         } catch (error) {
-            if (run.signal.aborted) return
-            show(panel(false, '', error instanceof Error ? error.message : String(error)))
+            if (controller.signal.aborted) return
+            closeSubagent()
+            show?.(panel(false, '', error instanceof Error ? error.message : String(error)))
         }
     }
 
     const open = (ctx: ExtensionContext): Promise<void> =>
         ctx.ui.custom<void>(
-            (tui, theme, _keybindings, close) => {
-                const done = (): void => {
-                    show = () => undefined
-                    close()
-                }
-
+            (tui, theme, _keybindings, done) => {
                 const panel = new PlanPanel(theme, () => tui.requestRender(), {
                     change: text => void refine(ctx, text),
                     accept: () => {
                         save({...state, accepted: true})
-                        show(current())
+                        show?.(current())
                     },
                     handOver: () => {
                         const goal = state.goal
@@ -102,10 +122,7 @@ export default function (pi: ExtensionAPI) {
                         save(idle)
                         if (goal !== undefined) pi.sendUserMessage(goal)
                     },
-                    close: () => {
-                        run?.abort()
-                        done()
-                    }
+                    close: () => done()
                 })
                 const current = (): PanelState => ({
                     goal: state.goal,
@@ -119,12 +136,18 @@ export default function (pi: ExtensionAPI) {
                 }
 
                 panel.setState(current())
-                return boxed(
-                    panel,
-                    title,
-                    text => theme.fg('border', text),
-                    text => theme.fg('accent', text)
-                )
+                return {
+                    ...boxed(
+                        panel,
+                        title,
+                        text => theme.fg('border', text),
+                        text => theme.fg('accent', text)
+                    ),
+                    dispose: () => {
+                        show = undefined
+                        closeSubagent()
+                    }
+                }
             },
             {overlay: true, overlayOptions}
         )
@@ -144,9 +167,12 @@ export default function (pi: ExtensionAPI) {
         }
     })
 
-    pi.on('session_start', (_event, ctx) => {
+    const restore = (_event: unknown, ctx: ExtensionContext): void => {
         state = lastState(ctx) ?? idle
-    })
+    }
+    pi.on('session_start', restore)
+    pi.on('session_tree', restore)
+    pi.on('session_shutdown', closeSubagent)
 }
 
 export {noGoalLine, tuiOnly}

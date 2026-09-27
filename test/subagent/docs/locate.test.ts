@@ -1,8 +1,14 @@
-import {describe, expect, test} from 'bun:test'
-import {symlinkSync} from 'node:fs'
+import {describe, expect, mock, test} from 'bun:test'
+import {mkdirSync, symlinkSync} from 'node:fs'
 import {join} from 'node:path'
 
-import {
+import {agentDir, getAgentDir, useAgentDir} from '../../agentDir'
+import {tempTree as tree, writeTree} from '../../tree'
+
+const actual = await import('@earendil-works/pi-coding-agent')
+await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgentDir}))
+
+const {
     assertPackage,
     locate,
     locateDownloaded,
@@ -11,9 +17,9 @@ import {
     packageName,
     projectOf,
     typesModule
-} from '../../../src/subagent/docs/locate'
-import {tempTree as tree} from '../../tree'
-
+} = await import('../../../src/subagent/docs/locate')
+useAgentDir()
+const docsCache = join(agentDir, 'cache', 'pi-nop-docs')
 describe('typesModule', () => {
     test('maps runtime modules to their types package', () => {
         expect(typesModule('node:fs')).toBe('node')
@@ -325,5 +331,27 @@ describe('locate', () => {
         })
         const found = locateDownloaded('@types/rt', join(root, 'cache/@types+rt@1.0.0'))
         expect(found?.types).toEqual([])
+    })
+
+    test('another version comes from the cache, naming the installed one', async () => {
+        writeTree(join(docsCache, 'lib@2.0.0', 'node_modules', 'lib'), {
+            'package.json': {name: 'lib', version: '2.0.0', types: 'index.d.ts'},
+            'index.d.ts': 'export {}'
+        })
+        const root = tree({'node_modules/lib/package.json': {name: 'lib', version: '1.0.0'}})
+        const other = await locate('lib', root, {version: '2.0.0'})
+        expect(other.source).toBe('downloaded')
+        expect(other.pkg.manifest.version).toBe('2.0.0')
+        expect(other.installed).toBe('1.0.0')
+        const fresh = await locate('lib', tree({}), {version: '2.0.0'})
+        expect(fresh.source).toBe('downloaded')
+        expect(fresh.installed).toBeUndefined()
+    })
+
+    test('a cached tree without the package is reported, not read', async () => {
+        mkdirSync(join(docsCache, 'empty@1.0.0'), {recursive: true})
+        await expect(locate('empty', tree({}), {version: '1.0.0'})).rejects.toThrow(
+            LocateErrors.NotUnpacked
+        )
     })
 })

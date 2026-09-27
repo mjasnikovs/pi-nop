@@ -6,17 +6,20 @@ Answer with one line and nothing else:
 ${goalLabel} <one sentence, what changes for the user>`
 
 type GoalTask = {
-    request: string
+    request?: string
     goal?: string
     change?: string
 }
 
 const goalTask = ({request, goal, change}: GoalTask): string =>
     [
-        `Request: ${request}`,
-        ...(goal === undefined ? [] : [`Current goal: ${goal}`]),
-        ...(change === undefined ? [] : [`Change asked by the user: ${change}`])
-    ].join('\n')
+        ['Request', request],
+        ['Current goal', goal],
+        ['Change asked by the user', change]
+    ]
+        .filter(([, value]) => value !== undefined)
+        .map(([label, value]) => `${label}: ${value}`)
+        .join('\n')
 
 const parseGoal = (text: string): string | undefined => {
     const line = text

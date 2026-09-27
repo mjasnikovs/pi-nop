@@ -9,20 +9,39 @@ import type {
 import type {SubagentUpdate} from '../../src/subagent/subagent'
 import {goalPrompt} from '../../src/plan/goal'
 
-const runSubagent = mock((_task: string, _signal: unknown, onUpdate: SubagentUpdate) => {
-    onUpdate?.({content: [], details: {lastAssistantText: 'reading'} as never})
+const prompt = mock((_task: string, _signal: unknown, onUpdate: SubagentUpdate) => {
+    onUpdate?.({content: [{type: 'text', text: 'reading'}], details: undefined})
     return Promise.resolve({text: 'GOAL: Fix the typo.', details: {} as never})
 })
+const dispose = mock(() => undefined)
+const subagentSession = mock((_options: {prompt: string}) => ({prompt, dispose}))
 const configuredOptions = mock(() => ({cwd: '/repo', prompt: '', tools: []}))
 await mock.module('../../src/subagent/subagent', () => ({
-    runSubagent,
+    subagentSession,
     configuredOptions,
     safeConfig: () => ({})
 }))
 
+const plain = (text: string) => text
+const actual = await import('@earendil-works/pi-coding-agent')
+await mock.module('@earendil-works/pi-coding-agent', () => ({
+    ...actual,
+    getSelectListTheme: () => ({
+        selectedPrefix: plain,
+        selectedText: plain,
+        description: plain,
+        scrollInfo: plain,
+        noMatch: plain
+    })
+}))
+
 const {default: register, noGoalLine, tuiOnly} = await import('../../src/plan/plan')
 
-type Panel = {render(width: number): string[]; handleInput(data: string): void}
+type Panel = {
+    render(width: number): string[]
+    handleInput(data: string): void
+    dispose?(): void
+}
 type Factory = (tui: unknown, theme: Theme, keybindings: unknown, done: () => void) => Panel
 type Command = {handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>}
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown
@@ -47,11 +66,14 @@ const pi = {
 
 let panel: Panel | undefined
 let closed = false
-const tui = {requestRender: () => undefined}
+const tui = {requestRender: (): void => undefined}
+// Like pi, closing the overlay disposes its component.
 const custom = mock((factory: Factory, _options: unknown) => {
-    panel = factory(tui, theme, undefined, () => {
+    const component = factory(tui, theme, undefined, () => {
         closed = true
+        component.dispose?.()
     })
+    panel = component
     return Promise.resolve()
 })
 const notify = mock((_text: string, _level: string) => undefined)
@@ -59,7 +81,7 @@ const entries: {type: string; customType?: string; data?: unknown}[] = []
 const ctx = {
     mode: 'tui',
     ui: {custom, notify, theme},
-    sessionManager: {getEntries: () => entries}
+    sessionManager: {getBranch: () => entries}
 } as unknown as ExtensionContext & ExtensionCommandContext
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -76,7 +98,8 @@ beforeEach(() => {
     entries.length = 0
     panel = undefined
     closed = false
-    for (const fn of [runSubagent, appendEntry, sendUserMessage, custom, notify]) fn.mockClear()
+    const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
+    for (const fn of fakes) fn.mockClear()
     register(pi)
 })
 
@@ -105,14 +128,8 @@ describe('/plan', () => {
         panel?.handleInput(enter)
         await settle()
 
-        const [task, , , options] = runSubagent.mock.calls[0] as unknown as [
-            string,
-            unknown,
-            unknown,
-            {prompt: string}
-        ]
-        expect(task).toBe('Request: fix the greeting')
-        expect(options.prompt).toBe(goalPrompt)
+        expect(prompt.mock.calls[0]?.[0]).toBe('Request: fix the greeting')
+        expect(subagentSession.mock.calls[0]?.[0].prompt).toBe(goalPrompt)
         expect(screen()).toContain('Fix the typo.')
         expect(lastEntry()).toEqual({
             request: 'fix the greeting',
@@ -121,7 +138,7 @@ describe('/plan', () => {
         })
     })
 
-    test('a second text is a change against the current goal', async () => {
+    test('changes go to the same session as only the change line', async () => {
         await commands.get('plan')?.handler('', ctx)
         type('fix the greeting')
         panel?.handleInput(enter)
@@ -129,20 +146,111 @@ describe('/plan', () => {
         type('add a test too')
         panel?.handleInput(enter)
         await settle()
+        type('keep it short')
+        panel?.handleInput(enter)
+        await settle()
 
-        expect(runSubagent.mock.calls[1]?.[0]).toBe(
+        expect(subagentSession).toHaveBeenCalledTimes(1)
+        expect(prompt.mock.calls.map(call => call[0])).toEqual([
+            'Request: fix the greeting',
+            'Change asked by the user: add a test too',
+            'Change asked by the user: keep it short'
+        ])
+        expect(dispose).not.toHaveBeenCalled()
+    })
+
+    test('close disposes the session and a fresh /plan opens a new one', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        panel?.handleInput(escape)
+
+        expect(closed).toBe(true)
+        expect(dispose).toHaveBeenCalledTimes(1)
+
+        await commands.get('plan')?.handler('', ctx)
+        type('add a test too')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(subagentSession).toHaveBeenCalledTimes(2)
+        expect(prompt.mock.calls[1]?.[0]).toBe(
             'Request: fix the greeting\nCurrent goal: Fix the typo.\nChange asked by the user: add a test too'
         )
     })
 
+    test('a failed change disposes the session and the next one starts cold', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        prompt.mockRejectedValueOnce(new Error('Subagent run failed: boom'))
+        type('add a test too')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(dispose).toHaveBeenCalledTimes(1)
+        expect(screen()).toContain('boom')
+
+        type('add a test too')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(subagentSession).toHaveBeenCalledTimes(2)
+        expect(prompt.mock.calls[2]?.[0]).toContain('Request: fix the greeting')
+    })
+
+    test('a change after a reply with no goal resends the shown goal', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        prompt.mockResolvedValueOnce({text: 'I changed it to use emoji.', details: {} as never})
+        type('use emoji')
+        panel?.handleInput(enter)
+        await settle()
+        type('keep it short')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(subagentSession).toHaveBeenCalledTimes(1)
+        expect(prompt.mock.calls[2]?.[0]).toBe(
+            'Request: fix the greeting\nCurrent goal: Fix the typo.\nChange asked by the user: keep it short'
+        )
+    })
+
+    test('the spinner repaints the panel while the subagent runs', async () => {
+        prompt.mockImplementationOnce(() => new Promise(() => undefined))
+        await commands.get('plan')?.handler('', ctx)
+        type('fix')
+        panel?.handleInput(enter)
+        const repainted = new Promise<void>(resolve => (tui.requestRender = resolve))
+        screen()
+
+        await repainted
+        tui.requestRender = () => undefined
+        panel?.handleInput(escape)
+    })
+
+    test('pi shutting down disposes the session', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        handlers.get('session_shutdown')?.({reason: 'quit'}, ctx)
+
+        expect(dispose).toHaveBeenCalledTimes(1)
+    })
+
     test('text after the command is the first request and shows in the panel', async () => {
         let finish: (result: {text: string; details: never}) => void = () => undefined
-        runSubagent.mockImplementationOnce(
+        prompt.mockImplementationOnce(
             () => new Promise(resolve => (finish = resolve as typeof finish))
         )
         await commands.get('plan')?.handler('fix the greeting', ctx)
 
-        expect(runSubagent.mock.calls[0]?.[0]).toBe('Request: fix the greeting')
+        expect(prompt.mock.calls[0]?.[0]).toBe('Request: fix the greeting')
         expect(screen()).toContain('subagent')
 
         finish({text: 'GOAL: Fix the typo.', details: {} as never})
@@ -152,7 +260,7 @@ describe('/plan', () => {
     })
 
     test('no GOAL line shows an error and keeps the old state', async () => {
-        runSubagent.mockResolvedValueOnce({text: 'I did it.', details: {} as never})
+        prompt.mockResolvedValueOnce({text: 'I did it.', details: {} as never})
         await commands.get('plan')?.handler('', ctx)
         type('fix')
         panel?.handleInput(enter)
@@ -163,7 +271,7 @@ describe('/plan', () => {
     })
 
     test('a failed run shows its message', async () => {
-        runSubagent.mockRejectedValueOnce(new Error('No model selected'))
+        prompt.mockRejectedValueOnce(new Error('No model selected'))
         await commands.get('plan')?.handler('', ctx)
         type('fix')
         panel?.handleInput(enter)
@@ -183,13 +291,14 @@ describe('/plan', () => {
 
         panel?.handleInput(enter)
         expect(closed).toBe(true)
+        expect(dispose).toHaveBeenCalledTimes(1)
         expect(sendUserMessage).toHaveBeenCalledWith('Fix the typo.')
         expect(lastEntry()).toEqual({accepted: false})
     })
 
     test('escape closes and aborts a running subagent', async () => {
         let signal: AbortSignal | undefined
-        runSubagent.mockImplementationOnce((_task, given) => {
+        prompt.mockImplementationOnce((_task, given) => {
             signal = given as AbortSignal
             return new Promise(() => undefined)
         })
@@ -200,6 +309,7 @@ describe('/plan', () => {
 
         expect(closed).toBe(true)
         expect(signal?.aborted).toBe(true)
+        expect(dispose).toHaveBeenCalledTimes(1)
     })
 
     test('reopening shows the saved goal', async () => {
