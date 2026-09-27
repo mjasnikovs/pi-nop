@@ -219,9 +219,7 @@ const answerText = (last: AssistantMessage): string => {
 }
 
 // Every subagent run goes through prompt, so the slot cap covers all of them.
-const subagentSession = (
-    options: SubagentOptions = defaultOptions(process.cwd())
-): SubagentSession => {
+const subagentSession = (options: SubagentOptions): SubagentSession => {
     let opening: Promise<AgentSession> | undefined
     let session: AgentSession | undefined
     let disposed = false
@@ -317,7 +315,7 @@ const runSubagent = async (
     task: string,
     signal: AbortSignal | undefined,
     onUpdate: SubagentUpdate,
-    options: SubagentOptions = defaultOptions(process.cwd())
+    options: SubagentOptions
 ): Promise<SubagentResult> => {
     const handle = subagentSession(options)
 

@@ -5,7 +5,7 @@ import type {TObject, TString} from 'typebox'
 import {rmSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
-import type {SubagentDetails, SubagentUpdate} from '../../src/subagent/subagent'
+import type {SubagentDetails, SubagentOptions, SubagentUpdate} from '../../src/subagent/subagent'
 
 type FakeMessage = Pick<
     AssistantMessage,
@@ -149,6 +149,8 @@ beforeEach(() => {
     rmSync(configPath, {force: true})
 })
 
+const sessionOptions: SubagentOptions = {cwd: '/opt/cwd', prompt: '', tools: []}
+
 const expectedDetails = {
     ...stats,
     model: 'fake-model',
@@ -161,7 +163,7 @@ const expectedDetails = {
 }
 describe('runSubagent', () => {
     test('returns text and details on a clean stop', async () => {
-        const result = await runSubagent('task', undefined, noProgress)
+        const result = await runSubagent('task', undefined, noProgress, sessionOptions)
         expect(result).toEqual({text: 'hello', details: expectedDetails})
         expect(session.prompt).toHaveBeenCalledTimes(1)
         expect(session.prompt).toHaveBeenCalledWith('task', {expandPromptTemplates: false})
@@ -220,19 +222,6 @@ describe('runSubagent', () => {
         expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({model}))
     })
 
-    test('uses read-only tools and the process cwd by default', async () => {
-        await runSubagent('task', undefined, noProgress)
-
-        expect(createAgentSession).toHaveBeenCalledWith(
-            expect.objectContaining({
-                cwd: process.cwd(),
-                tools: ['read', 'grep', 'find', 'ls'],
-                thinkingLevel: undefined
-            })
-        )
-        expect(loaderOptions).toHaveBeenCalledWith(expect.objectContaining({systemPrompt: ''}))
-    })
-
     test('reads the last assistant message, not the first', async () => {
         session.messages = [
             assistant({model: 'first', stopReason: 'toolUse'}),
@@ -240,7 +229,7 @@ describe('runSubagent', () => {
             assistant({model: 'second'})
         ]
 
-        const result = await runSubagent('task', undefined, noProgress)
+        const result = await runSubagent('task', undefined, noProgress, sessionOptions)
         expect(result.details.model).toBe('second')
         expect(result.details.stopReason).toBe('stop')
     })
@@ -254,9 +243,14 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        const result = await runSubagent('task', undefined, update => {
-            seen.push(update.details)
-        })
+        const result = await runSubagent(
+            'task',
+            undefined,
+            update => {
+                seen.push(update.details)
+            },
+            sessionOptions
+        )
         expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}, expectedDetails])
         expect(result.details).toEqual(expectedDetails)
         expect(session.unsubscribe).toHaveBeenCalledTimes(1)
@@ -273,9 +267,14 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await runSubagent('task', undefined, update => {
-            seen.push(update.details)
-        })
+        await runSubagent(
+            'task',
+            undefined,
+            update => {
+                seen.push(update.details)
+            },
+            sessionOptions
+        )
 
         expect(seen.map(details => details?.lastAssistantText)).toEqual([
             'checking',
@@ -292,9 +291,14 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await runSubagent('task', undefined, update => {
-            seen.push(update.details)
-        })
+        await runSubagent(
+            'task',
+            undefined,
+            update => {
+                seen.push(update.details)
+            },
+            sessionOptions
+        )
 
         expect(seen).toEqual([expectedDetails])
     })
@@ -308,9 +312,14 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        const result = await runSubagent('task', undefined, update => {
-            seen.push(update.details)
-        })
+        const result = await runSubagent(
+            'task',
+            undefined,
+            update => {
+                seen.push(update.details)
+            },
+            sessionOptions
+        )
         expect(seen.map(details => details?.elapsedMs)).toEqual([250, 1_250])
         expect(result.details.elapsedMs).toBe(1_250)
     })
@@ -319,9 +328,9 @@ describe('runSubagent', () => {
         const controller = new AbortController()
         controller.abort()
 
-        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
-            'Subagent aborted'
-        )
+        await expect(
+            runSubagent('task', controller.signal, noProgress, sessionOptions)
+        ).rejects.toThrow('Subagent aborted')
         expect(loaderOptions).not.toHaveBeenCalled()
         expect(createAgentSession).not.toHaveBeenCalled()
     })
@@ -333,9 +342,9 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
-            'Subagent aborted'
-        )
+        await expect(
+            runSubagent('task', controller.signal, noProgress, sessionOptions)
+        ).rejects.toThrow('Subagent aborted')
         expect(session.prompt).not.toHaveBeenCalled()
         expect(session.abort).not.toHaveBeenCalled()
         expect(session.dispose).toHaveBeenCalledTimes(1)
@@ -348,16 +357,16 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
-            'Subagent aborted'
-        )
+        await expect(
+            runSubagent('task', controller.signal, noProgress, sessionOptions)
+        ).rejects.toThrow('Subagent aborted')
         expect(session.abort).toHaveBeenCalledTimes(1)
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
 
     test('removes the abort listener after a successful run', async () => {
         const controller = new AbortController()
-        await runSubagent('task', controller.signal, noProgress)
+        await runSubagent('task', controller.signal, noProgress, sessionOptions)
         controller.abort()
 
         expect(session.abort).not.toHaveBeenCalled()
@@ -367,9 +376,9 @@ describe('runSubagent', () => {
         const controller = new AbortController()
         session.onPrompt = () => Promise.reject(new Error('network down'))
 
-        await expect(runSubagent('task', controller.signal, noProgress)).rejects.toThrow(
-            'network down'
-        )
+        await expect(
+            runSubagent('task', controller.signal, noProgress, sessionOptions)
+        ).rejects.toThrow('network down')
         controller.abort()
 
         expect(session.abort).not.toHaveBeenCalled()
@@ -382,7 +391,7 @@ describe('runSubagent', () => {
             return Promise.resolve()
         }
 
-        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
             'Subagent context was compacted'
         )
         expect(session.abort).toHaveBeenCalledTimes(1)
@@ -392,7 +401,7 @@ describe('runSubagent', () => {
     test('throws when the model ran out of output', async () => {
         session.messages = [assistant({stopReason: 'length'})]
 
-        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
             'Subagent output cut off at the model output limit'
         )
         expect(session.dispose).toHaveBeenCalledTimes(1)
@@ -403,7 +412,7 @@ describe('runSubagent', () => {
         async stopReason => {
             session.messages = [assistant({stopReason})]
 
-            const result = await runSubagent('task', undefined, noProgress)
+            const result = await runSubagent('task', undefined, noProgress, sessionOptions)
             expect(result.text).toBe('hello')
             expect(result.details.stopReason).toBe(stopReason)
         }
@@ -412,7 +421,7 @@ describe('runSubagent', () => {
     test('throws when there is no assistant message', async () => {
         session.messages = [{role: 'user'}]
 
-        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
             'Empty model output'
         )
         expect(session.dispose).toHaveBeenCalledTimes(1)
@@ -421,7 +430,7 @@ describe('runSubagent', () => {
     test('throws with the error message when the run errors', async () => {
         session.messages = [assistant({stopReason: 'error', errorMessage: 'boom'})]
 
-        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
             'Subagent run failed: boom'
         )
         expect(session.dispose).toHaveBeenCalledTimes(1)
@@ -430,7 +439,7 @@ describe('runSubagent', () => {
     test('throws with the stop reason when the run is aborted without a message', async () => {
         session.messages = [assistant({stopReason: 'aborted'})]
 
-        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
             'Subagent run failed: aborted'
         )
     })
@@ -438,7 +447,7 @@ describe('runSubagent', () => {
     test('throws when the assistant text is missing', async () => {
         session.messages = [assistant({content: [{type: 'text', text: '  '}]})]
 
-        await expect(runSubagent('task', undefined, noProgress)).rejects.toThrow(
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
             'Empty model output'
         )
         expect(session.dispose).toHaveBeenCalledTimes(1)
@@ -450,7 +459,7 @@ describe('subagentSession', () => {
         session.messages.push({role: 'user'}, assistant({content: [{type: 'text', text}]}))
     }
     test('two prompts share one pi session and keep it open', async () => {
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         expect((await handle.prompt('one', undefined, noProgress)).text).toBe('hello')
         answer('second')
         expect((await handle.prompt('two', undefined, noProgress)).text).toBe('second')
@@ -465,7 +474,7 @@ describe('subagentSession', () => {
     })
 
     test('a prompt answers only from its own turns', async () => {
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         await handle.prompt('one', undefined, noProgress)
         session.prompt.mockImplementationOnce(() => Promise.resolve())
 
@@ -475,7 +484,7 @@ describe('subagentSession', () => {
     })
 
     test('an aborted prompt keeps the session for the next one', async () => {
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         const controller = new AbortController()
         session.onPrompt = () => {
             controller.abort()
@@ -495,7 +504,7 @@ describe('subagentSession', () => {
     })
 
     test('a prompt after dispose throws', async () => {
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         await handle.prompt('one', undefined, noProgress)
         handle.dispose()
 
@@ -506,7 +515,7 @@ describe('subagentSession', () => {
     })
 
     test('a session that finishes building after dispose is disposed', async () => {
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         onReload = () => {
             handle.dispose()
             return Promise.resolve()
@@ -520,7 +529,7 @@ describe('subagentSession', () => {
     })
 
     test('compaction closes the session', async () => {
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         session.onPrompt = () => {
             session.emit({type: 'compaction_start'})
             return Promise.resolve()
@@ -539,9 +548,9 @@ describe('subagentSession', () => {
         saveConfig({concurrency: 1})
         const held: Array<() => void> = []
         session.onPrompt = () => new Promise<void>(resolve => held.push(resolve))
-        const handle = subagentSession()
+        const handle = subagentSession(sessionOptions)
         const updates: unknown[] = []
-        const first = runSubagent('one', undefined, noProgress)
+        const first = runSubagent('one', undefined, noProgress, sessionOptions)
         const second = handle.prompt('two', undefined, update => updates.push(update))
         await new Promise(resolve => setTimeout(resolve, 0))
 
