@@ -32,3 +32,6 @@ logs
 # Finder (MacOS) folder config
 .DS_Store
 eval/transcripts
+
+# planning harness (throwaway measurements)
+harness

@@ -33,18 +33,16 @@ describe('extension', () => {
         expect(names).toEqual(['subagent', 'subagent-fetch', 'subagent-docs', 'web-search'])
     })
 
-    test('registers the config command', () => {
+    test('registers the config and plan commands', () => {
         register(pi)
 
-        expect(registerCommand).toHaveBeenCalledTimes(1)
-        const [name] = registerCommand.mock.calls[0] as [string]
-        expect(name).toBe('nop-config')
+        const names = registerCommand.mock.calls.map(([name]) => name)
+        expect(names).toEqual(['nop-config', 'plan'])
     })
 
     test('notifies on session start', () => {
         register(pi)
 
-        expect(on).toHaveBeenCalledTimes(1)
         const [name, handler] = on.mock.calls[0] as [string, SessionStartHandler]
         expect(name).toBe('session_start')
 
