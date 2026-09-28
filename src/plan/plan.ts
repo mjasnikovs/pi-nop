@@ -28,6 +28,12 @@ type PlanState = {
 
 const idle: PlanState = {accepted: false}
 
+// The goal prompt allows no text before the answer, so tool turns report only their count.
+const runStatus = (text: string, turns: number): string => {
+    if (turns === 0) return oneLine(text)
+    return oneLine(text) || `turn ${String(turns)}`
+}
+
 const isPlanEntry = (entry: SessionEntry): entry is CustomEntry<PlanState> =>
     entry.type === 'custom' && entry.customType === entryType
 
@@ -39,17 +45,34 @@ const lastState = (ctx: ExtensionContext): PlanState | undefined =>
 
 export default function (pi: ExtensionAPI) {
     let state = idle
-    let run: AbortController | undefined
+    let running: {request: string; status: string; controller: AbortController} | undefined
+    let error: string | undefined
     let subagent: {session: SubagentSession; knowsGoal: boolean} | undefined
-    let show: ((panel: PanelState) => void) | undefined
+    let repaint: (() => void) | undefined
+
+    // The only place panel state comes from, so a new field cannot miss a copy.
+    const panelState = (): PanelState => ({
+        request: state.request ?? running?.request,
+        goal: state.goal,
+        accepted: state.accepted && running === undefined,
+        running: running !== undefined,
+        status: running?.status ?? '',
+        error
+    })
 
     const save = (next: PlanState): void => {
         state = next
         pi.appendEntry(entryType, state)
     }
 
+    const stopRun = (): void => {
+        running?.controller.abort()
+        running = undefined
+        error = undefined
+    }
+
     const closeSubagent = (): void => {
-        run?.abort()
+        stopRun()
         subagent?.session.dispose()
         subagent = undefined
     }
@@ -63,13 +86,6 @@ export default function (pi: ExtensionAPI) {
     const refine = async (ctx: ExtensionContext, text: string): Promise<void> => {
         const request = state.request ?? text
         const task = taskFor(text)
-        const panel = (running: boolean, status = '', error?: string): PanelState => ({
-            goal: state.goal,
-            accepted: false,
-            running,
-            status,
-            error
-        })
         subagent ??= {
             session: subagentSession({
                 ...configuredOptions(safeConfig(ctx), ctx, 'subagent'),
@@ -78,32 +94,40 @@ export default function (pi: ExtensionAPI) {
             knowsGoal: false
         }
         const current = subagent
-        run?.abort()
-        const controller = new AbortController()
-        run = controller
-        show?.(panel(true))
+        stopRun()
+        const run = {request, status: '', turns: 0, controller: new AbortController()}
+        running = run
+        repaint?.()
 
         try {
-            const {text: answer} = await current.session.prompt(task, controller.signal, update =>
-                show?.(panel(true, oneLine(contentText(update.content))))
+            const {text: answer} = await current.session.prompt(
+                task,
+                run.controller.signal,
+                update => {
+                    // Only a finished turn carries details; queue notices do not count.
+                    if (update.details !== undefined) run.turns += 1
+                    run.status = runStatus(contentText(update.content), run.turns)
+                    repaint?.()
+                }
             )
             const goal = parseGoal(answer)
 
             if (goal === undefined) {
                 // The session's last reply is not the shown goal, so the next change resends it.
                 current.knowsGoal = false
-                show?.(panel(false, '', noGoalLine))
-                return
+                error = noGoalLine
+            } else {
+                current.knowsGoal = true
+                save({request, goal, accepted: false})
             }
 
-            current.knowsGoal = true
-
-            save({request, goal, accepted: false})
-            show?.(panel(false))
-        } catch (error) {
-            if (controller.signal.aborted) return
+            running = undefined
+            repaint?.()
+        } catch (failure) {
+            if (run.controller.signal.aborted) return
             closeSubagent()
-            show?.(panel(false, '', error instanceof Error ? error.message : String(error)))
+            error = failure instanceof Error ? failure.message : String(failure)
+            repaint?.()
         }
     }
 
@@ -113,8 +137,9 @@ export default function (pi: ExtensionAPI) {
                 const panel = new PlanPanel(theme, () => tui.requestRender(), {
                     change: text => void refine(ctx, text),
                     accept: () => {
+                        error = undefined
                         save({...state, accepted: true})
-                        show?.(current())
+                        repaint?.()
                     },
                     handOver: () => {
                         const goal = state.goal
@@ -124,18 +149,12 @@ export default function (pi: ExtensionAPI) {
                     },
                     close: () => done()
                 })
-                const current = (): PanelState => ({
-                    goal: state.goal,
-                    accepted: state.accepted,
-                    running: false,
-                    status: ''
-                })
-                show = (next: PanelState): void => {
-                    panel.setState(next)
+                repaint = (): void => {
+                    panel.setState(panelState())
                     tui.requestRender()
                 }
 
-                panel.setState(current())
+                panel.setState(panelState())
                 return {
                     ...boxed(
                         panel,
@@ -144,7 +163,7 @@ export default function (pi: ExtensionAPI) {
                         text => theme.fg('accent', text)
                     ),
                     dispose: () => {
-                        show = undefined
+                        repaint = undefined
                         closeSubagent()
                     }
                 }
@@ -160,6 +179,7 @@ export default function (pi: ExtensionAPI) {
             }
 
             const text = args.trim()
+            if (text !== '' && state !== idle) save(idle)
             const opened = open(ctx)
 
             if (text !== '') void refine(ctx, text)

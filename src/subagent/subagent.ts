@@ -214,9 +214,13 @@ const answerText = (last: AssistantMessage): string => {
 
     const text = turnText(last)
 
-    if (text === '') throw new Error(SubagentErrors.EmptyOutput)
+    if (text === '') throw new Error(SubagentErrors.EmptyOutput + emptyDetail(last))
     return text
 }
+
+// What the empty turn held, so a model that answers inside its thinking can be told apart.
+const emptyDetail = (last: AssistantMessage): string =>
+    ` (${last.stopReason}; blocks: ${last.content.map(block => block.type).join(', ') || 'none'})`
 
 // Every subagent run goes through prompt, so the slot cap covers all of them.
 const subagentSession = (options: SubagentOptions): SubagentSession => {

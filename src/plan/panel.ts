@@ -4,7 +4,7 @@ import type {SelectItem, SelectListTheme} from '@earendil-works/pi-tui'
 import {Input, Key, matchesKey, SelectList, wrapTextWithAnsi} from '@earendil-works/pi-tui'
 
 import type {Focusable} from '../config/box'
-import {spinnerFrames, SubagentRows} from '../subagent/subagentTui'
+import {formatElapsed, spinnerFrames, SubagentRows} from '../subagent/subagentTui'
 
 const steps = ['Goal', 'Questions', 'Steps', 'Hand over'] as const
 const escapeKey = Key.escape
@@ -14,6 +14,7 @@ const downKey = Key.down
 const maxRows = 4
 
 type PanelState = {
+    request?: string
     goal?: string
     accepted: boolean
     running: boolean
@@ -54,7 +55,13 @@ const listTheme = (active: boolean): SelectListTheme => {
 }
 
 const body = (theme: Theme, state: PanelState, width: number): string[] => {
-    if (state.goal === undefined) return [theme.fg('dim', 'Type what you want done.')]
+    if (state.goal === undefined) {
+        if (state.request === undefined) return [theme.fg('dim', 'Type what you want done.')]
+        return [
+            theme.fg('accent', theme.bold('REQUEST')),
+            ...wrapTextWithAnsi(state.request, width)
+        ]
+    }
 
     const mark = state.accepted ? theme.fg('success', '✓ ') : ''
     return [mark + theme.fg('accent', theme.bold('GOAL')), ...wrapTextWithAnsi(state.goal, width)]
@@ -75,6 +82,8 @@ class PlanPanel implements Focusable {
     }
 
     setState(state: PanelState): void {
+        if (state.running && !this.state.running) this.rows.startedAt = Date.now()
+        if (!state.running) this.rows.startedAt = undefined
         this.state = state
         this.selected = 0
         this.rows.setRunning(state.running)
@@ -175,7 +184,7 @@ class PlanPanel implements Focusable {
         return (
             this.theme.fg('accent', spinnerFrames[this.rows.frame] ?? '')
             + ' '
-            + this.theme.fg('muted', 'subagent · ')
+            + this.theme.fg('muted', `subagent · ${formatElapsed(this.rows.elapsedMs())} · `)
             + this.theme.fg('toolOutput', this.state.status || 'starting…')
         )
     }

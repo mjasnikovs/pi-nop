@@ -328,3 +328,25 @@ Subagent goal prompt, `harness/goal-run.ts`, Gemma 4 12B, 10 runs per prompt, la
 | Run time | 2 to 14 s | 1 to 6 s |
 
 Every run read `src/greet.js` first. Qwen not measured, it was not loaded.
+
+Change turns in one session, `harness/goal-session.ts`, Gemma 4 12B. Prompt A is the one above.
+Prompt B adds "Rewrite your last goal with that change and do not read files again."
+
+Edit scenario, 30 sessions per prompt: typo request, then "Also rename greet to hello.", then
+"Drop the test, no test."
+
+| Claim | Prompt A | Prompt B |
+|---|---|---|
+| Rename change: `GOAL:` parsed, rename in the goal | 28/30 | 30/30 |
+| Drop change: goal no longer names a test | 15/30 | 29/30 |
+| Change turn looped past 120 s | 4/60 | 0/60 |
+| Change turn time | 2 to 33 s | 1 to 3 s |
+
+Explore scenario, 2 sessions per prompt: then "Also cover the other exported function in that
+file." (needs a read, the answer is `shout`), then "Also fix the other file that imports greet."
+(needs a search, the answer is `cli.js`). B named `shout` 0/2 and `cli` 0/2. It never opened a
+file and echoed the change words back as the goal. So B is fast because it does not look, and it
+was not shipped. A named `shout` 2/2 and `cli` 1/2, at 12 to 35 s per change, 11 to 28 tool
+turns. A softer line, "read a file only when the change needs something you have not seen yet",
+named `shout` 2/2, `cli` 0/2 and looped once. Prompt A stays. Open: a wording that rereads only
+when the change needs it, measured on both scenarios.

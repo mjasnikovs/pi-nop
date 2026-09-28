@@ -61,6 +61,26 @@ describe('PlanPanel', () => {
         expect(hint(panel)).toBe('type your request  ·  enter sends  ·  esc close')
     })
 
+    test('a request with no goal yet is shown in place of the prompt', () => {
+        panel.setState(state({request: 'fix it', running: true}))
+        const lines = panel.render(width)
+        expect(lines).toContain('fix it')
+        expect(lines).not.toContain('Type what you want done.')
+    })
+
+    test('a running panel keeps its own clock', () => {
+        panel.setState(state({request: 'fix it', running: true}))
+        panel['rows'].startedAt = Date.now() - 12_000
+        expect(panel.render(width).join('\n')).toContain('subagent · 00:12 · starting…')
+
+        panel.setState(state({request: 'fix it', running: true}))
+        expect(panel.render(width).join('\n')).toContain('00:12')
+
+        panel.setState(state({goal: 'Fix it.'}))
+        panel.setState(state({goal: 'Fix it.', running: true}))
+        expect(panel.render(width).join('\n')).toContain('00:00')
+    })
+
     test('enter sends the typed text and clears the input', () => {
         panel.setState(state())
         type(panel, 'fix it')
@@ -150,7 +170,7 @@ describe('PlanPanel', () => {
     test('running shows the subagent line, no input, no menu', () => {
         panel.setState(state({goal: 'Old.', running: true, status: 'reading src/greet.js'}))
         const text = panel.render(width).join('\n')
-        expect(text).toContain('subagent · reading src/greet.js')
+        expect(text).toContain('subagent · 00:00 · reading src/greet.js')
         expect(text).not.toContain('> ')
         expect(text).not.toContain(rows.accept.label)
         expect(hint(panel)).toBe('esc close')

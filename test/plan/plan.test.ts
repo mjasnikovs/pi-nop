@@ -220,6 +220,79 @@ describe('/plan', () => {
         )
     })
 
+    test('text-less turns show a count that restarts per change', async () => {
+        const silent = {content: [{type: 'text' as const, text: ''}], details: {} as never}
+        prompt.mockImplementationOnce((_task, _signal, onUpdate) => {
+            onUpdate?.(silent)
+            onUpdate?.(silent)
+            return Promise.resolve({text: 'GOAL: Fix the typo.', details: {} as never})
+        })
+        await commands.get('plan')?.handler('fix', ctx)
+        await settle()
+
+        prompt.mockImplementationOnce((_task, _signal, onUpdate) => {
+            onUpdate?.(silent)
+            return new Promise(() => undefined)
+        })
+        type('also rename it')
+        panel?.handleInput(enter)
+
+        expect(screen()).toContain('turn 1')
+        panel?.handleInput(escape)
+    })
+
+    test('queue notices do not count as turns', async () => {
+        const notice = (text: string) => ({
+            content: [{type: 'text' as const, text}],
+            details: undefined
+        })
+        prompt.mockImplementationOnce((_task, _signal, onUpdate) => {
+            onUpdate?.(notice('queued…'))
+            onUpdate?.(notice(''))
+            return new Promise(() => undefined)
+        })
+        await commands.get('plan')?.handler('', ctx)
+        type('fix')
+        panel?.handleInput(enter)
+
+        expect(screen()).toContain('starting…')
+        expect(screen()).not.toContain('turn')
+        panel?.handleInput(escape)
+    })
+
+    test('accept clears a stale error', async () => {
+        await commands.get('plan')?.handler('fix', ctx)
+        await settle()
+        prompt.mockResolvedValueOnce({text: 'I did it.', details: {} as never})
+        type('also rename it')
+        panel?.handleInput(enter)
+        await settle()
+        expect(screen()).toContain(noGoalLine.slice(0, 30))
+
+        panel?.handleInput(enter)
+
+        expect(screen()).not.toContain(noGoalLine.slice(0, 30))
+        expect(lastEntry()).toMatchObject({accepted: true})
+    })
+
+    test('text after the command starts a new plan over a saved one', async () => {
+        entries.push({
+            type: 'custom',
+            customType: 'plan-mode',
+            data: {request: 'old', goal: 'Old goal.', accepted: true}
+        })
+        handlers.get('session_start')?.({}, ctx)
+        await commands.get('plan')?.handler('fix the greeting', ctx)
+        await settle()
+
+        expect(prompt.mock.calls[0]?.[0]).toBe('Request: fix the greeting')
+        expect(lastEntry()).toEqual({
+            request: 'fix the greeting',
+            goal: 'Fix the typo.',
+            accepted: false
+        })
+    })
+
     test('the spinner repaints the panel while the subagent runs', async () => {
         prompt.mockImplementationOnce(() => new Promise(() => undefined))
         await commands.get('plan')?.handler('', ctx)
@@ -252,6 +325,8 @@ describe('/plan', () => {
 
         expect(prompt.mock.calls[0]?.[0]).toBe('Request: fix the greeting')
         expect(screen()).toContain('subagent')
+        expect(screen()).toContain('fix the greeting')
+        expect(screen()).not.toContain('Type what you want done.')
 
         finish({text: 'GOAL: Fix the typo.', details: {} as never})
         await settle()
@@ -294,6 +369,22 @@ describe('/plan', () => {
         expect(dispose).toHaveBeenCalledTimes(1)
         expect(sendUserMessage).toHaveBeenCalledWith('Fix the typo.')
         expect(lastEntry()).toEqual({accepted: false})
+    })
+
+    test('a change after accept drops the check mark while it runs', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix')
+        panel?.handleInput(enter)
+        await settle()
+        panel?.handleInput(enter)
+        expect(screen()).toContain('✓ GOAL')
+
+        prompt.mockImplementationOnce(() => new Promise(() => undefined))
+        type('also rename it')
+        panel?.handleInput(enter)
+        expect(screen()).not.toContain('✓ GOAL')
+        expect(screen()).toContain('Fix the typo.')
+        panel?.handleInput(escape)
     })
 
     test('escape closes and aborts a running subagent', async () => {

@@ -313,6 +313,7 @@ const renderResult = (
 export {
     CallSlot,
     clockIcon,
+    formatElapsed,
     idleTicks,
     oneLine,
     queued,

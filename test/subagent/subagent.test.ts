@@ -448,7 +448,7 @@ describe('runSubagent', () => {
         session.messages = [assistant({content: [{type: 'text', text: '  '}]})]
 
         await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
-            'Empty model output'
+            'Empty model output (stop; blocks: text)'
         )
         expect(session.dispose).toHaveBeenCalledTimes(1)
     })
