@@ -8,12 +8,15 @@ const leakHint = (marker: string): string =>
     + 'calling the tool, so it never ran. Call tools through the tool API. Never type '
     + '<tool_call>, <function=…> or <parameter=…> markup into your answer.]'
 
-// A leaked call starts its own line. Markup quoted mid-line, as code evidence, is not a leak.
+// A leaked call starts its own line outside a code fence. Markup quoted mid-line or fenced, as
+// evidence, is not a leak.
+const fence = /```[\s\S]*?```/g
 const toolCallTag = /^\s*(<tool_call\b[^>]*>)/im
 const functionTag = /^\s*(<function=[\w.-]+\s*>)/im
 const parameterTag = /^\s*<parameter=[\w.-]+\s*>/im
 
-const leakedMarker = (text: string): string | undefined => {
+const leakedMarker = (answer: string): string | undefined => {
+    const text = answer.replace(fence, '')
     const tag = toolCallTag.exec(text)?.[1]
     if (tag !== undefined) return tag
     return parameterTag.test(text) ? functionTag.exec(text)?.[1] : undefined

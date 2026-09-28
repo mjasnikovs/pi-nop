@@ -2,103 +2,32 @@ import type {ExtensionAPI, ExtensionCommandContext} from '@earendil-works/pi-cod
 import {getSelectListTheme, getSettingsListTheme} from '@earendil-works/pi-coding-agent'
 import type {SettingItem} from '@earendil-works/pi-tui'
 import {SelectList, SettingsList} from '@earendil-works/pi-tui'
-import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import {readFileSync} from 'node:fs'
-import type {TSchema} from 'typebox'
-import Value from 'typebox/value'
 
 import {boxed} from './box'
 import {
-    brokenConfig,
-    concurrencyKey,
-    concurrencyLevels,
-    concurrencySchema,
-    defaultEngine,
-    engines,
-    guardDefaults,
-    loadConfig,
+    applyChange,
+    inherit,
+    modelOf,
     modelSpec,
-    off,
-    restartLevels,
-    restartsSchema,
+    read,
+    safeConfig,
     saveConfig,
-    searchSchema,
-    searchTool,
-    staleMinutes,
-    staleSchema,
-    thinkingLevels,
-    toolCallMinutes,
-    toolCallSchema,
+    settings,
     tools
 } from './config'
+import type {NopConfig, Setting} from './config'
 import {gap, header, settable, skipInert} from './sections'
-import type {NopConfig, NopTool, ToolConfig} from './config'
 
-const inherit = 'inherit'
-const unlimited = 'unlimited'
-const guardsSection = 'guards'
-
-type GuardKey = keyof typeof guardDefaults
-
-type GuardRow = {
-    key: GuardKey
-    label: string
-    description: string
-    values: string[]
-    schema: TSchema
-}
-
-const guardRows: GuardRow[] = [
-    {
-        key: 'staleMinutes',
-        label: 'no model output for',
-        description:
-            'Kill the run when the model sends nothing for this long. Includes the time a local '
-            + 'model spends reading a long prompt.',
-        values: [off, ...staleMinutes.map(String)],
-        schema: staleSchema
-    },
-    {
-        key: 'toolCallMinutes',
-        label: 'one tool call runs for',
-        description:
-            'Kill the run when a single read, grep, find or ls does not return in this time.',
-        values: [off, ...toolCallMinutes.map(String)],
-        schema: toolCallSchema
-    },
-    {
-        key: 'restarts',
-        label: 'restarts after a kill',
-        description:
-            'How many times a killed run starts again with a hint about what went wrong. '
-            + '0 keeps the guards and fails on the first kill.',
-        values: restartLevels.map(String),
-        schema: restartsSchema
-    }
-]
-
-const level = (value: string): string | number => (value === off ? off : Number(value))
 const maxVisible = 10
 // Two levels up from both src/config and dist/config, so the built package reads the same file.
 const packageJson = new URL('../../package.json', import.meta.url)
 const title = (): string =>
     `pi-nop v${(JSON.parse(readFileSync(packageJson, 'utf8')) as {version: string}).version}`
 
-type Field = keyof ToolConfig
-
-const rowId = (tool: NopTool, field: Field): string => `${tool}.${field}`
-const engineRow = `${searchTool}.engine`
-const concurrencyRow = concurrencyKey
-
-const parseRowId = (id: string): [NopTool, Field] => {
-    const [tool, field] = id.split('.') as [NopTool, Field]
-    return [tool, field]
-}
-
 const modelPicker =
-    (models: string[]) =>
+    (options: string[]) =>
     (current: string, done: (selected?: string) => void): SelectList => {
-        const options = [inherit, ...models]
         const list = new SelectList(
             options.map(value => ({value, label: value})),
             Math.min(options.length, maxVisible),
@@ -110,87 +39,42 @@ const modelPicker =
         return list
     }
 
+const offered = (setting: Setting): string[] => {
+    const levels = (setting.levels ?? []).map(String)
+    const fallback = String(setting.fallback)
+    return levels.includes(fallback) ? levels : [fallback, ...levels]
+}
+
+const row = (config: NopConfig, models: string[], setting: Setting): SettingItem => ({
+    id: setting.id,
+    label: setting.label,
+    description: setting.description,
+    currentValue: String(read(config, setting)),
+    ...(setting.levels === undefined ?
+        {submenu: modelPicker([String(setting.fallback), ...models])}
+    :   {values: offered(setting)})
+})
+
+const sections = [...new Set(settings.map(setting => setting.section))]
 const same = (text: string): string => text
 
-const panelItems = (config: NopConfig, models: string[], paint = same): SettingItem[] => [
-    ...tools.flatMap((tool, index) => [
-        ...(index === 0 ? [] : [gap(tool)]),
-        header(tool, paint),
-        {
-            id: rowId(tool, 'model'),
-            label: 'model',
-            currentValue: config[tool]?.model ?? inherit,
-            submenu: modelPicker(models)
-        },
-        {
-            id: rowId(tool, 'thinkingLevel'),
-            label: 'thinking',
-            currentValue: config[tool]?.thinkingLevel ?? inherit,
-            values: [inherit, ...thinkingLevels]
-        }
-    ]),
-    gap(searchTool),
-    header(searchTool, paint),
-    {
-        id: engineRow,
-        label: 'engine',
-        currentValue: config[searchTool]?.engine ?? defaultEngine,
-        values: [...engines]
-    },
-    gap(concurrencyKey),
-    header(concurrencyKey, paint),
-    {
-        id: concurrencyRow,
-        label: 'subagents at once',
-        currentValue: String(config[concurrencyKey] ?? unlimited),
-        values: [unlimited, ...concurrencyLevels.map(String)]
-    },
-    gap(guardsSection),
-    header(guardsSection, paint),
-    ...guardRows.map(row => ({
-        id: row.key,
-        label: row.label,
-        description: row.description,
-        currentValue: String(config[row.key] ?? guardDefaults[row.key]),
-        values: row.values
-    }))
-]
-
-const withTool = (config: NopConfig, tool: NopTool, entry: ToolConfig): NopConfig => {
-    const {[tool]: _dropped, ...rest} = config
-    return Object.keys(entry).length === 0 ? rest : {...rest, [tool]: entry}
-}
-
-const applyChange = (config: NopConfig, id: string, value: string): NopConfig => {
-    if (id === engineRow)
-        return {...config, [searchTool]: Value.Parse(searchSchema, {engine: value})}
-
-    if (id === concurrencyRow) {
-        const {[concurrencyKey]: _dropped, ...rest} = config
-        if (value === unlimited) return rest
-        return {...rest, [concurrencyKey]: Value.Parse(concurrencySchema, Number(value))}
-    }
-
-    const guard = guardRows.find(row => row.key === id)
-    if (guard !== undefined)
-        return {...config, [guard.key]: Value.Parse(guard.schema, level(value))}
-
-    const [tool, field] = parseRowId(id)
-    const {[field]: _dropped, ...entry} = config[tool] ?? {}
-
-    if (value === inherit) return withTool(config, tool, entry)
-    // The thinking row only offers real levels, so the cast cannot let a bad one through.
-    return withTool(config, tool, {...entry, [field]: value as ThinkingLevel})
-}
+const panelItems = (config: NopConfig, models: string[], paint = same): SettingItem[] =>
+    sections.flatMap((section, index) => [
+        ...(index === 0 ? [] : [gap(section)]),
+        header(section, paint),
+        ...settings
+            .filter(setting => setting.section === section)
+            .map(setting => row(config, models, setting))
+    ])
 
 // An empty registry says nothing about the saved models, so they are left alone.
 const dropStaleModels = (config: NopConfig, models: string[]): NopConfig =>
     tools.reduce((fixed, tool) => {
         if (models.length === 0) return fixed
-        const model = fixed[tool]?.model
-        return model === undefined || models.includes(model) ?
+        const model = read(fixed, modelOf(tool))
+        return model === inherit || models.includes(model) ?
                 fixed
-            :   applyChange(fixed, rowId(tool, 'model'), inherit)
+            :   applyChange(fixed, modelOf(tool).id, inherit)
     }, config)
 
 const availableModels = (ctx: ExtensionCommandContext): string[] =>
@@ -203,15 +87,6 @@ const offeredModels = (ctx: ExtensionCommandContext, available: string[]): strin
     return scoped.length > 0 ? scoped : available
 }
 
-const openConfig = (ctx: ExtensionCommandContext): NopConfig => {
-    try {
-        return loadConfig()
-    } catch {
-        ctx.ui.notify(brokenConfig, 'warning')
-        return {}
-    }
-}
-
 export default function (pi: ExtensionAPI) {
     pi.registerCommand('nop-config', {
         description:
@@ -220,7 +95,7 @@ export default function (pi: ExtensionAPI) {
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)
-            let config = dropStaleModels(openConfig(ctx), available)
+            let config = dropStaleModels(safeConfig(ctx), available)
 
             if (ctx.mode !== 'tui') {
                 ctx.ui.notify(
@@ -259,4 +134,4 @@ export default function (pi: ExtensionAPI) {
     })
 }
 
-export {applyChange, dropStaleModels, panelItems}
+export {dropStaleModels, panelItems}

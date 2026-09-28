@@ -1,14 +1,16 @@
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
-import type {ModelRegistry} from '@earendil-works/pi-coding-agent'
+import type {ExtensionContext, ModelRegistry} from '@earendil-works/pi-coding-agent'
 import {getAgentDir} from '@earendil-works/pi-coding-agent'
 import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, Model} from '@earendil-works/pi-ai'
-import {type Static, Type} from 'typebox'
+import {type Static, type TSchema, Type} from 'typebox'
 import Value from 'typebox/value'
 
 const configFile = 'pi-nop.json'
 const tools = ['subagent', 'subagent-fetch', 'subagent-docs'] as const
+const searchTool = 'web-search'
+const engines = ['exa', 'brave', 'ddg'] as const
 const thinkingLevels = [
     'off',
     'minimal',
@@ -18,54 +20,137 @@ const thinkingLevels = [
     'xhigh',
     'max'
 ] as const satisfies readonly ThinkingLevel[]
-const toolSchema = Type.Object(
-    {
-        model: Type.Optional(Type.String()),
-        thinkingLevel: Type.Optional(Type.Enum(thinkingLevels))
-    },
-    {additionalProperties: false}
-)
-const engines = ['exa', 'brave', 'ddg'] as const
-const defaultEngine = 'exa' satisfies EngineName
-const engineSchema = Type.Enum(engines)
-const searchSchema = Type.Object(
-    {engine: Type.Optional(engineSchema)},
-    {additionalProperties: false}
-)
-const searchTool = 'web-search'
-const concurrencyLevels = [1, 2, 3, 4] as const
-const concurrencySchema = Type.Enum(concurrencyLevels)
-const concurrencyKey = 'concurrency'
+const inherit = 'inherit'
+const unlimited = 'unlimited'
 const off = 'off'
-const staleMinutes = [5, 10, 20, 30] as const
-const toolCallMinutes = [5, 10, 15, 30] as const
-const restartLevels = [0, 1, 2, 3] as const
-const staleSchema = Type.Union([Type.Literal(off), Type.Enum(staleMinutes)])
-const toolCallSchema = Type.Union([Type.Literal(off), Type.Enum(toolCallMinutes)])
-const restartsSchema = Type.Enum(restartLevels)
-// MAGIC NUMBER: pi-task's defaults. Ten idle minutes outlasts a local model's prefill of a long
-// page, fifteen covers a grep over a large tree, and a third restart stopped helping there.
-const guardDefaults = {staleMinutes: 10, toolCallMinutes: 15, restarts: 2} as const
-const configSchema = Type.Object(
-    {
-        subagent: Type.Optional(toolSchema),
-        'subagent-fetch': Type.Optional(toolSchema),
-        'subagent-docs': Type.Optional(toolSchema),
-        [searchTool]: Type.Optional(searchSchema),
-        [concurrencyKey]: Type.Optional(concurrencySchema),
-        staleMinutes: Type.Optional(staleSchema),
-        toolCallMinutes: Type.Optional(toolCallSchema),
-        restarts: Type.Optional(restartsSchema)
-    },
-    {additionalProperties: false}
-)
 const brokenConfig =
     'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
 
 type NopTool = (typeof tools)[number]
 type EngineName = (typeof engines)[number]
-type ToolConfig = Static<typeof toolSchema>
-type SearchConfig = Static<typeof searchSchema>
+type Level = string | number
+
+// The id, split on '.', is the setting's path in the file and its row id in the panel. The
+// fallback is what a reader gets when the file has no value; picking it in the panel clears the key.
+type Setting = {
+    id: string
+    section: string
+    label: string
+    description?: string
+    levels?: readonly Level[]
+    fallback: Level
+    schema: TSchema
+}
+
+type Choice<L extends Level[], F extends Level> = Omit<Setting, 'levels' | 'schema'> & {
+    levels: readonly [...L]
+    fallback: F
+}
+
+const choice = <const L extends Level[], const F extends Level>(spec: Choice<L, F>) => ({
+    ...spec,
+    schema: Type.Enum(spec.levels)
+})
+
+const modelOf = (tool: NopTool) => ({
+    id: `${tool}.model`,
+    section: tool,
+    label: 'model',
+    fallback: inherit,
+    schema: Type.String()
+})
+
+const thinkingOf = (tool: NopTool) =>
+    choice({
+        id: `${tool}.thinkingLevel`,
+        section: tool,
+        label: 'thinking',
+        levels: thinkingLevels,
+        fallback: inherit
+    })
+
+const engine = choice({
+    id: `${searchTool}.engine`,
+    section: searchTool,
+    label: 'engine',
+    levels: engines,
+    fallback: 'exa'
+})
+
+const concurrency = choice({
+    id: 'concurrency',
+    section: 'concurrency',
+    label: 'subagents at once',
+    levels: [1, 2, 3, 4],
+    fallback: unlimited
+})
+
+// MAGIC NUMBER: pi-task's defaults. Ten idle minutes outlasts a local model's prefill of a long
+// page, fifteen covers a grep over a large tree, and a third restart stopped helping there.
+const staleMinutes = choice({
+    id: 'staleMinutes',
+    section: 'guards',
+    label: 'no model output for',
+    description:
+        'Kill the run when the model sends nothing for this long. Includes the time a local '
+        + 'model spends reading a long prompt.',
+    levels: [off, 5, 10, 20, 30],
+    fallback: 10
+})
+
+const toolCallMinutes = choice({
+    id: 'toolCallMinutes',
+    section: 'guards',
+    label: 'one tool call runs for',
+    description: 'Kill the run when a single read, grep, find or ls does not return in this time.',
+    levels: [off, 5, 10, 15, 30],
+    fallback: 15
+})
+
+const restarts = choice({
+    id: 'restarts',
+    section: 'guards',
+    label: 'restarts after a kill',
+    description:
+        'How many times a killed run starts again with a hint about what went wrong. '
+        + '0 keeps the guards and fails on the first kill.',
+    levels: [0, 1, 2, 3],
+    fallback: 2
+})
+
+const settings: Setting[] = [
+    ...tools.flatMap(tool => [modelOf(tool), thinkingOf(tool)]),
+    engine,
+    concurrency,
+    staleMinutes,
+    toolCallMinutes,
+    restarts
+]
+
+const strict = {additionalProperties: false}
+const path = (id: string): [string, string?] => id.split('.') as [string, string?]
+
+const fileSchema = () => {
+    const properties: Record<string, TSchema> = {}
+    const nested: Record<string, Record<string, TSchema>> = {}
+
+    for (const setting of settings) {
+        const [head, tail] = path(setting.id)
+
+        if (tail === undefined) properties[head] = Type.Optional(setting.schema)
+        else {
+            nested[head] ??= {}
+            nested[head][tail] = Type.Optional(setting.schema)
+        }
+    }
+
+    for (const [head, fields] of Object.entries(nested))
+        properties[head] = Type.Optional(Type.Object(fields, strict))
+    return Type.Object(properties, strict)
+}
+
+const configSchema = fileSchema()
+
 type NopConfig = Static<typeof configSchema>
 
 const configPath = (): string => join(getAgentDir(), configFile)
@@ -80,34 +165,70 @@ const saveConfig = (config: NopConfig): void => {
     writeFileSync(configPath(), JSON.stringify(config, null, 2) + '\n')
 }
 
+const safeConfig = (ctx?: ExtensionContext): NopConfig => {
+    try {
+        return loadConfig()
+    } catch {
+        ctx?.ui.notify(brokenConfig, 'warning')
+        return {}
+    }
+}
+
+const stored = (config: NopConfig, id: string): unknown =>
+    id.split('.').reduce<unknown>((node, key) => (node as NopConfig | undefined)?.[key], config)
+
+const read = <S extends Setting>(
+    config: NopConfig,
+    setting: S
+): Static<S['schema']> | S['fallback'] =>
+    (stored(config, setting.id) as Static<S['schema']> | undefined) ?? setting.fallback
+
+const put = (config: NopConfig, id: string, value: unknown): NopConfig => {
+    const [head, tail] = path(id)
+    const {[head]: current, ...rest} = config
+    if (tail === undefined) return value === undefined ? rest : {...rest, [head]: value}
+
+    const {[tail]: _dropped, ...entry} = (current ?? {}) as NopConfig
+    const next = value === undefined ? entry : {...entry, [tail]: value}
+    return Object.keys(next).length === 0 ? rest : {...rest, [head]: next}
+}
+
+const applyChange = (config: NopConfig, id: string, value: string): NopConfig => {
+    const setting = settings.find(entry => entry.id === id)
+    if (setting === undefined) throw new Error(`Unknown setting: ${id}`)
+    if (value === String(setting.fallback)) return put(config, id, undefined)
+
+    const level = setting.levels?.find(entry => String(entry) === value) ?? value
+    return put(config, id, Value.Parse(setting.schema, level))
+}
+
 const modelSpec = (model: Model<Api>): string => `${model.provider}/${model.id}`
 
 const findModel = (registry: ModelRegistry, spec?: string): Model<Api> | undefined =>
     registry.getAvailable().find(model => modelSpec(model) === spec)
 
 export {
+    applyChange,
     brokenConfig,
-    concurrencyKey,
-    concurrencyLevels,
-    concurrencySchema,
-    defaultEngine,
+    concurrency,
+    engine,
     engines,
-    engineSchema,
     findModel,
-    guardDefaults,
+    inherit,
     loadConfig,
+    modelOf,
     modelSpec,
     off,
-    restartLevels,
-    restartsSchema,
+    read,
+    restarts,
+    safeConfig,
     saveConfig,
-    searchSchema,
     searchTool,
+    settings,
     staleMinutes,
-    staleSchema,
-    thinkingLevels,
+    thinkingOf,
     toolCallMinutes,
-    toolCallSchema,
-    tools
+    tools,
+    unlimited
 }
-export type {EngineName, NopConfig, NopTool, SearchConfig, ToolConfig}
+export type {EngineName, NopConfig, NopTool, Setting}

@@ -10,7 +10,7 @@ import type {SubagentUpdate} from '../../src/subagent/subagent'
 import {goalPrompt} from '../../src/plan/goal'
 
 const prompt = mock((_task: string, _signal: unknown, onUpdate: SubagentUpdate) => {
-    onUpdate?.({content: [{type: 'text', text: 'reading'}], details: undefined})
+    onUpdate?.({type: 'turn', text: 'reading', details: {} as never})
     return Promise.resolve({text: 'GOAL: Fix the typo.', details: {} as never})
 })
 const dispose = mock(() => undefined)
@@ -18,8 +18,7 @@ const subagentSession = mock((_options: {prompt: string}) => ({prompt, dispose})
 const configuredOptions = mock(() => ({cwd: '/repo', prompt: '', tools: []}))
 await mock.module('../../src/subagent/subagent', () => ({
     subagentSession,
-    configuredOptions,
-    safeConfig: () => ({})
+    configuredOptions
 }))
 
 const plain = (text: string) => text
@@ -221,7 +220,7 @@ describe('/plan', () => {
     })
 
     test('text-less turns show a count that restarts per change', async () => {
-        const silent = {content: [{type: 'text' as const, text: ''}], details: {} as never}
+        const silent = {type: 'turn' as const, text: '', details: {} as never}
         prompt.mockImplementationOnce((_task, _signal, onUpdate) => {
             onUpdate?.(silent)
             onUpdate?.(silent)
@@ -242,13 +241,9 @@ describe('/plan', () => {
     })
 
     test('queue notices do not count as turns', async () => {
-        const notice = (text: string) => ({
-            content: [{type: 'text' as const, text}],
-            details: undefined
-        })
         prompt.mockImplementationOnce((_task, _signal, onUpdate) => {
-            onUpdate?.(notice('queued…'))
-            onUpdate?.(notice(''))
+            onUpdate?.({type: 'queued'})
+            onUpdate?.({type: 'started'})
             return new Promise(() => undefined)
         })
         await commands.get('plan')?.handler('', ctx)

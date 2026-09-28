@@ -20,7 +20,7 @@ and prompts again with a note on what went wrong. After `restarts` kills the too
 `Subagent killed by the guard: <name>`.
 
 - **loop**: the same tool call five times in the last twenty, or one file re-read five times
-  without reaching new lines. The note names the call and lists what was already read.
+  without reaching new lines. The note names the call and lists what the attempt had read.
 - **stale**: no event from the model for `staleMinutes`. The clock pauses while a tool call runs
   and while pi waits to retry a failed request. A long prompt on a local model counts, so keep
   `staleMinutes` above the model's slowest prefill.

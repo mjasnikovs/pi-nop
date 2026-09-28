@@ -2,26 +2,26 @@ import type {Guard, Trip} from './guard'
 import {noop} from './guard'
 import {callKey} from './key'
 import type {ReadCall, Visited} from './visited'
-import {readCall} from './visited'
+import {readCall, readEnd} from './visited'
 
 // MAGIC NUMBER: pi-task's tested pair. Fewer flags a model that re-checks one file; more lets
 // a loop run for minutes before the kill.
 const windowSize = 20
 const threshold = 5
 
-type Entry = {key: string; read: ReadCall | undefined}
+type Entry = {id: string; key: string; read: ReadCall | undefined}
 
 const repeatHint = (name: string, args: unknown, count: number, visited: Visited): string =>
     `[SYSTEM NOTE: Your previous attempt called ${name}(${JSON.stringify(args)}) ${count} times `
-    + `in its last ${windowSize} tool calls and was stopped as a loop. Do not repeat that call. `
-    + 'If you have seen its result, work from memory or take a different angle.'
+    + `in its last ${windowSize} tool calls and was stopped as a loop. Its conversation is `
+    + 'discarded. Redo the work from here without repeating that call. Take a different angle.'
     + `${visited.list()}]`
 
 const revisitHint = (path: string, visited: Visited): string =>
     `[SYSTEM NOTE: Your previous attempt re-read ${path} ${threshold} times without reaching `
-    + 'new lines and was stopped as a loop. Read each region of a file at most once. When a '
-    + 'file is too large to read whole, page forward through it instead of re-opening the start.'
-    + `${visited.list()}]`
+    + 'new lines and was stopped as a loop. Its conversation is discarded. Redo the work from '
+    + 'here, reading each region of a file at most once. When a file is too large to read whole, '
+    + `page forward through it instead of re-opening the start.${visited.list()}]`
 
 // A read that goes past the highest line already read on that path is progress. Any other is
 // a revisit.
@@ -43,9 +43,19 @@ const createLoop = (trip: Trip, visited: Visited): Guard => {
 
     return {
         onEvent: event => {
+            if (event.type === 'tool_execution_end') {
+                const entry = window.find(other => other.id === event.toolCallId)
+                if (entry?.read !== undefined) entry.read = readEnd(entry.read, event.result)
+                return
+            }
+
             if (event.type !== 'tool_execution_start') return
-            const {toolName, args} = event
-            const entry = {key: callKey(toolName, args), read: readCall(toolName, args)}
+            const {toolCallId, toolName, args} = event
+            const entry = {
+                id: toolCallId,
+                key: callKey(toolName, args),
+                read: readCall(toolName, args)
+            }
             window.push(entry)
             if (window.length > windowSize) window.shift()
 

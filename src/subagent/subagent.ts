@@ -11,18 +11,28 @@ import {
     SessionManager,
     SettingsManager
 } from '@earendil-works/pi-coding-agent'
-import type {AgentToolUpdateCallback, ThinkingLevel} from '@earendil-works/pi-agent-core'
+import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import type {Api, AssistantMessage, Model} from '@earendil-works/pi-ai'
 import {contentText} from '@earendil-works/pi-ai'
 import {type Static, type TObject, Type} from 'typebox'
 
-import {brokenConfig, findModel, loadConfig} from '../config/config'
-import type {NopConfig, NopTool} from '../config/config'
+import {
+    concurrency,
+    findModel,
+    inherit,
+    modelOf,
+    read,
+    safeConfig,
+    thinkingOf,
+    unlimited
+} from '../config/config'
+import type {NopTool} from '../config/config'
 import type {GuardHit} from './guards/guard'
 import type {GuardSettings} from './guards/guards'
 import {guardSettings, watchGuards} from './guards/guards'
+import type {SubagentDetails, SubagentUpdate} from './progress'
 import {slots} from './slots'
-import {queued, renderCall, renderResult} from './subagentTui'
+import {renderCall, renderResult, toolProgress} from './subagentTui'
 
 enum SubagentErrors {
     EmptyOutput = 'Empty model output',
@@ -50,20 +60,10 @@ type SubagentOptions = {
     model?: Model<Api>
 }
 
-type SubagentDetails = SessionStats
-    & Pick<AssistantMessage, 'model' | 'provider' | 'stopReason' | 'timestamp'> & {
-        task: string
-        lastAssistantText: string
-        elapsedMs: number
-        restarts: number
-    }
-
 type SubagentResult = {
     text: string
     details: SubagentDetails
 }
-
-type SubagentUpdate = AgentToolUpdateCallback<SubagentDetails | undefined> | undefined
 
 type SubagentSession = {
     prompt: (
@@ -106,39 +106,16 @@ const defaultOptions = (cwd: string): SubagentOptions => ({
     tools: [SubagentTools.Read, SubagentTools.Grep, SubagentTools.Find, SubagentTools.Ls]
 })
 
-// Read on every prompt, so a session kept open still follows the current settings.
-const readConfig = (): NopConfig | undefined => {
-    try {
-        return loadConfig()
-    } catch {
-        return undefined
-    }
-}
-
-const safeConfig = (ctx: ExtensionContext): NopConfig => {
-    const config = readConfig()
-
-    if (config === undefined) ctx.ui.notify(brokenConfig, 'warning')
-    return config ?? {}
-}
-
-const configuredOptions = (
-    nop: NopConfig,
-    ctx: ExtensionContext,
-    tool: NopTool
-): SubagentOptions => {
-    const config = nop[tool] ?? {}
+const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOptions => {
+    const nop = safeConfig(ctx)
+    const thinkingLevel = read(nop, thinkingOf(tool))
 
     return {
         ...defaultOptions(ctx.cwd),
-        thinkingLevel: config.thinkingLevel ?? ctx.thinkingLevel,
-        model: findModel(ctx.modelRegistry, config.model) ?? ctx.model
+        thinkingLevel: thinkingLevel === inherit ? ctx.thinkingLevel : thinkingLevel,
+        model: findModel(ctx.modelRegistry, read(nop, modelOf(tool))) ?? ctx.model
     }
 }
-
-// A bare text update carries no details, so the row shows the text and keeps its stats.
-const status = (onUpdate: SubagentUpdate, text: string): void =>
-    onUpdate?.({content: [{type: 'text', text}], details: undefined})
 
 const buildSession = async (options: SubagentOptions): Promise<AgentSession> => {
     const settingsManager = SettingsManager.create(options.cwd, getAgentDir())
@@ -207,7 +184,7 @@ const watchTurn = (
             startedAt,
             restarts
         )
-        onUpdate?.({content: [{type: 'text', text: lastText}], details})
+        onUpdate?.({type: 'turn', text: lastText, details})
     })
     return {watch, stop}
 }
@@ -304,6 +281,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         if (disposed) throw new Error(SubagentErrors.Disposed)
         if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
+        onUpdate?.({type: 'started'})
         opening ??= open()
         const current = await opening
         const contextWindow = current.model?.contextWindow ?? 0
@@ -358,7 +336,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
                 if (restarts >= settings.restarts) throw new Error(SubagentErrors.Killed + hit.id)
 
                 rewind()
-                status(onUpdate, `restarting: ${hit.id}`)
+                onUpdate?.({type: 'restarting', guard: hit.id})
                 text = [hit.hint, task].join('\n\n')
             }
         } finally {
@@ -371,19 +349,13 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate
     ): Promise<SubagentResult> => {
-        let waited = false
-        const nop = readConfig() ?? {}
-        slots.setCap(nop.concurrency ?? Number.POSITIVE_INFINITY)
+        // Read on every prompt, so a session kept open still follows the current settings.
+        const nop = safeConfig()
+        const cap = read(nop, concurrency)
+        slots.setCap(cap === unlimited ? Number.POSITIVE_INFINITY : cap)
         return slots.run(
-            () => {
-                // Clears "queued…" so the row falls back to "starting…" while the session loads.
-                if (waited) status(onUpdate, '')
-                return turn(task, signal, onUpdate, guardSettings(nop))
-            },
-            () => {
-                waited = true
-                status(onUpdate, queued)
-            }
+            () => turn(task, signal, onUpdate, guardSettings(nop)),
+            () => onUpdate?.({type: 'queued'})
         )
     }
 
@@ -436,13 +408,12 @@ const registerSubagentTool = <T extends TObject>(pi: ExtensionAPI, spec: Subagen
         description: spec.description,
         parameters: spec.parameters,
         async execute(_toolCallId, params, signal, onUpdate, ctx) {
-            const nop = safeConfig(ctx)
             const {task, options, failure, verify} = await spec.prepare(
                 params,
                 signal,
-                configuredOptions(nop, ctx, spec.name)
+                configuredOptions(ctx, spec.name)
             )
-            const {text, details} = await runSubagent(task, signal, onUpdate, options)
+            const {text, details} = await runSubagent(task, signal, toolProgress(onUpdate), options)
 
             if (failure !== undefined) throw new Error(failure(text))
             return {
@@ -490,7 +461,6 @@ export {
     configuredOptions,
     registerSubagentTool,
     runSubagent,
-    safeConfig,
     SubagentErrors,
     subagentSession,
     unlessAborted

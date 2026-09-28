@@ -10,9 +10,9 @@ const factor = 2
 
 const churnHint =
     '[SYSTEM NOTE: Your previous attempt pulled in more file content than its context window '
-    + 'holds twice over, so the earliest material was dropped and you began re-reading it. It '
-    + 'was stopped. Read only what you have not read yet, and write your answer from what you '
-    + 'have.]'
+    + 'holds twice over, so the earliest material was dropped and it began re-reading it. It '
+    + 'was stopped and its conversation discarded. Redo the work from here, reading only what '
+    + 'the answer needs.]'
 
 const createChurn = (trip: Trip, contextWindow: number): Guard => {
     let tokens = 0

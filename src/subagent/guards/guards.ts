@@ -1,7 +1,7 @@
 import type {AgentSession} from '@earendil-works/pi-coding-agent'
 
 import type {NopConfig} from '../../config/config'
-import {guardDefaults} from '../../config/config'
+import {read, restarts, staleMinutes, toolCallMinutes} from '../../config/config'
 import {createChurn} from './churn'
 import type {Clock, Guard, GuardHit} from './guard'
 import {realClock} from './guard'
@@ -24,9 +24,9 @@ const minutesToMs = (value: number | 'off'): number | undefined =>
     value === 'off' ? undefined : value * 60_000
 
 const guardSettings = (nop: NopConfig): GuardSettings => ({
-    staleMs: minutesToMs(nop.staleMinutes ?? guardDefaults.staleMinutes),
-    toolCallMs: minutesToMs(nop.toolCallMinutes ?? guardDefaults.toolCallMinutes),
-    restarts: nop.restarts ?? guardDefaults.restarts
+    staleMs: minutesToMs(read(nop, staleMinutes)),
+    toolCallMs: minutesToMs(read(nop, toolCallMinutes)),
+    restarts: read(nop, restarts)
 })
 
 // One subscription for the attempt. The first hit wins and aborts the run if it is still going.

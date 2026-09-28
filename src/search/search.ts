@@ -2,9 +2,8 @@ import type {ExtensionAPI} from '@earendil-works/pi-coding-agent'
 import {Type} from 'typebox'
 import Value from 'typebox/value'
 
-import {defaultEngine, engineSchema, searchTool} from '../config/config'
+import {engine, read, safeConfig, searchTool} from '../config/config'
 import type {EngineName} from '../config/config'
-import {safeConfig} from '../subagent/subagent'
 import {brave} from './brave'
 import {ddg} from './ddg'
 import {exa} from './exa'
@@ -44,8 +43,8 @@ export default function (pi: ExtensionAPI) {
         }),
         async execute(_toolCallId, params, signal, _onUpdate, ctx) {
             const name = Value.Parse(
-                engineSchema,
-                process.env[engineOverride] ?? safeConfig(ctx)[searchTool]?.engine ?? defaultEngine
+                engine.schema,
+                process.env[engineOverride] ?? read(safeConfig(ctx), engine)
             )
             const results = httpOnly(await engines[name](params.query, signal))
             return {

@@ -45,12 +45,12 @@ const start = (
 const end = (
     toolName: string,
     args: unknown,
-    options: {isError?: boolean; text?: string; toolCallId?: string} = {}
+    options: {isError?: boolean; text?: string; toolCallId?: string; details?: unknown} = {}
 ): AgentSessionEvent => ({
     type: 'tool_execution_end',
     toolCallId: options.toolCallId ?? `${toolName}-${JSON.stringify(args)}`,
     toolName,
-    result: {content: [{type: 'text', text: options.text ?? 'ok'}], details: undefined},
+    result: {content: [{type: 'text', text: options.text ?? 'ok'}], details: options.details},
     isError: options.isError ?? false
 })
 

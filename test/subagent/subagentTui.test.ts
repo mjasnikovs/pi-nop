@@ -6,14 +6,13 @@ import type {SubagentDetails} from '../../src/subagent/subagent'
 import type {SubagentRenderState} from '../../src/subagent/subagentTui'
 import {
     clockIcon,
-    idleTicks,
-    queued,
     renderCall as renderCallTui,
     renderResult as renderResultTui,
-    spinnerFrames,
-    spinnerIntervalMs,
-    SubagentRows
+    SubagentRows,
+    toolProgress,
+    toolUpdate
 } from '../../src/subagent/subagentTui'
+import {idleTicks, spinnerFrames, spinnerIntervalMs} from '../../src/tui/spinner'
 
 // The tests drive the renderers the way registerSubagentTool does: name and title come from args.
 const renderCall = (args: {task?: string} | undefined, theme: Theme, ctx: TestContext) =>
@@ -104,6 +103,33 @@ afterEach(() => {
 })
 
 describe('subagent tui', () => {
+    describe('toolProgress turns runner events into pi partial results', () => {
+        test('a turn carries its text and details', () => {
+            const seen: unknown[] = []
+            toolProgress(update => seen.push(update))?.({
+                type: 'turn',
+                text: 'looking',
+                details: details()
+            })
+            expect(seen).toEqual([{content: [{type: 'text', text: 'looking'}], details: details()}])
+        })
+
+        test('the other events carry only a label', () => {
+            expect(toolUpdate({type: 'restarting', guard: 'loop'})).toEqual({
+                content: [{type: 'text', text: 'restarting: loop'}],
+                details: undefined
+            })
+            expect(toolUpdate({type: 'started'})).toEqual({
+                content: [{type: 'text', text: ''}],
+                details: undefined
+            })
+        })
+
+        test('no pi callback means no adapter', () => {
+            expect(toolProgress(undefined)).toBeUndefined()
+        })
+    })
+
     test('renderCall shows three lines before any progress arrives', () => {
         const out = lines(renderCall({task: 'find the auth flow'}, theme, makeContext() as never))
         expect(out).toHaveLength(3)
@@ -193,7 +219,7 @@ describe('subagent tui', () => {
 
         const out = lines(
             renderResult(
-                {content: [{type: 'text', text: queued}], details: undefined},
+                toolUpdate({type: 'queued'}),
                 {expanded: false, isPartial: true},
                 theme,
                 ctx as never
@@ -207,7 +233,7 @@ describe('subagent tui', () => {
 
         const started = lines(
             renderResult(
-                {content: [{type: 'text', text: ''}], details: undefined},
+                toolUpdate({type: 'started'}),
                 {expanded: false, isPartial: true},
                 theme,
                 ctx as never

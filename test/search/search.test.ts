@@ -7,8 +7,8 @@ type SearchTool = ToolDefinition<TObject<{query: TString}>>
 
 let config: NopConfig = {}
 const safeConfig = mock((_ctx: ExtensionContext) => config)
-const {SubagentErrors} = await import('../../src/subagent/subagent')
-await mock.module('../../src/subagent/subagent', () => ({safeConfig, SubagentErrors}))
+const actual = await import('../../src/config/config')
+await mock.module('../../src/config/config', () => ({...actual, safeConfig}))
 
 const {braveKey} = await import('../../src/search/brave')
 const {endpointOverride} = await import('../../src/search/engines')

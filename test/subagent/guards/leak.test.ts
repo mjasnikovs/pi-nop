@@ -24,6 +24,10 @@ describe('leakedMarker', () => {
         expect(leakedMarker('<function=read> only')).toBeUndefined()
         expect(leakedMarker('<parameter=path> only')).toBeUndefined()
         expect(leakedMarker('plain answer')).toBeUndefined()
+        expect(
+            leakedMarker('the fixture:\n```\n<tool_call>\n{}\n</tool_call>\n```')
+        ).toBeUndefined()
+        expect(leakedMarker('```\n<tool_call>\n```\n<tool_call>')).toBe('<tool_call>')
         expect(leakedMarker('const tag = /<tool_call\\b[^>]*>/i')).toBeUndefined()
         expect(
             leakedMarker('EVIDENCE:\nif (text.includes("<function=read>")) <parameter=x>')

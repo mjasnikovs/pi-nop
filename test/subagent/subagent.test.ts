@@ -263,7 +263,7 @@ describe('runSubagent', () => {
             'task',
             undefined,
             update => {
-                seen.push(update.details)
+                if (update.type === 'turn') seen.push(update.details)
             },
             sessionOptions
         )
@@ -287,7 +287,7 @@ describe('runSubagent', () => {
             'task',
             undefined,
             update => {
-                seen.push(update.details)
+                if (update.type === 'turn') seen.push(update.details)
             },
             sessionOptions
         )
@@ -311,7 +311,7 @@ describe('runSubagent', () => {
             'task',
             undefined,
             update => {
-                seen.push(update.details)
+                if (update.type === 'turn') seen.push(update.details)
             },
             sessionOptions
         )
@@ -332,7 +332,7 @@ describe('runSubagent', () => {
             'task',
             undefined,
             update => {
-                seen.push(update.details)
+                if (update.type === 'turn') seen.push(update.details)
             },
             sessionOptions
         )
@@ -570,7 +570,7 @@ describe('subagentSession', () => {
         const second = handle.prompt('two', undefined, update => updates.push(update))
         await new Promise(resolve => setTimeout(resolve, 0))
 
-        expect(updates).toEqual([{content: [{type: 'text', text: 'queued…'}], details: undefined}])
+        expect(updates).toEqual([{type: 'queued'}])
         expect(session.prompt).toHaveBeenCalledTimes(1)
 
         held.shift()?.()
@@ -626,12 +626,14 @@ describe('guards', () => {
         expect(session.sessionManager.resetLeaf).not.toHaveBeenCalled()
         expect(session.agent.state.messages).toEqual([{role: 'user'}])
         expect(updates).toEqual([
+            {type: 'started'},
             {
-                content: [{type: 'text', text: 'hello'}],
+                type: 'turn',
+                text: 'hello',
                 details: {...expectedDetails, stopReason: 'aborted', lastAssistantText: 'hello'}
             },
-            {content: [{type: 'text', text: 'restarting: loop'}], details: undefined},
-            {content: [{type: 'text', text: 'hello'}], details: {...expectedDetails, restarts: 1}}
+            {type: 'restarting', guard: 'loop'},
+            {type: 'turn', text: 'hello', details: {...expectedDetails, restarts: 1}}
         ])
         expect(createAgentSession).toHaveBeenCalledTimes(1)
     })
@@ -802,7 +804,7 @@ describe('extension', () => {
 
     test('forwards subagent progress to the tool update callback', async () => {
         const tool = registeredTool()
-        const updates: Array<{text: string; task: string}> = []
+        const updates: Array<{text: string; task: string | undefined}> = []
         await tool.execute(
             'id',
             {task: 'find the bug'},
@@ -811,13 +813,16 @@ describe('extension', () => {
                 const [content] = partial.content
                 updates.push({
                     text: content?.type === 'text' ? content.text : '',
-                    task: (partial.details as SubagentDetails).task
+                    task: (partial.details as SubagentDetails | undefined)?.task
                 })
             },
             ctx('/fake/cwd')
         )
 
-        expect(updates).toEqual([{text: 'hello', task: 'find the bug'}])
+        expect(updates).toEqual([
+            {text: '', task: undefined},
+            {text: 'hello', task: 'find the bug'}
+        ])
     })
 
     test('registers a read-only subagent tool with a task parameter', () => {

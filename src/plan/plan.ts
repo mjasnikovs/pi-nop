@@ -4,11 +4,11 @@ import type {
     ExtensionContext,
     SessionEntry
 } from '@earendil-works/pi-coding-agent'
-import {contentText} from '@earendil-works/pi-ai'
 
 import {boxed} from '../config/box'
-import {configuredOptions, safeConfig, subagentSession} from '../subagent/subagent'
+import {configuredOptions, subagentSession} from '../subagent/subagent'
 import type {SubagentSession} from '../subagent/subagent'
+import {progressLabel} from '../subagent/progress'
 import {oneLine} from '../subagent/subagentTui'
 import {goalPrompt, goalTask, parseGoal} from './goal'
 import {PlanPanel} from './panel'
@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI) {
         const task = taskFor(text)
         subagent ??= {
             session: subagentSession({
-                ...configuredOptions(safeConfig(ctx), ctx, 'subagent'),
+                ...configuredOptions(ctx, 'subagent'),
                 prompt: goalPrompt
             }),
             knowsGoal: false
@@ -103,10 +103,9 @@ export default function (pi: ExtensionAPI) {
             const {text: answer} = await current.session.prompt(
                 task,
                 run.controller.signal,
-                update => {
-                    // Only a finished turn carries details; queue notices do not count.
-                    if (update.details !== undefined) run.turns += 1
-                    run.status = runStatus(contentText(update.content), run.turns)
+                event => {
+                    if (event.type === 'turn') run.turns += 1
+                    run.status = runStatus(progressLabel(event), run.turns)
                     repaint?.()
                 }
             )

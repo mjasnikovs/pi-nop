@@ -5,21 +5,22 @@ import {
     type ToolDefinition,
     type ToolRenderResultOptions
 } from '@earendil-works/pi-coding-agent'
+import type {AgentToolUpdateCallback} from '@earendil-works/pi-agent-core'
 import type {TSchema} from 'typebox'
 import type {Component} from '@earendil-works/pi-tui'
 import {Container, Markdown, Spacer, Text, truncateToWidth} from '@earendil-works/pi-tui'
 
-import type {SubagentDetails} from './subagent'
+import {formatElapsed, Spinner, spinnerFrames} from '../tui/spinner'
+import {progressLabel} from './progress'
+import type {SubagentDetails, SubagentProgress, SubagentUpdate} from './progress'
 
 type SubagentPhase = 'queued' | 'running' | 'done' | 'error'
 
 type SubagentToolResult = AgentToolResult<SubagentDetails | undefined>
+type SubagentToolUpdate = AgentToolUpdateCallback<SubagentDetails | undefined> | undefined
 
-const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const queued = 'queued…'
+const queued = progressLabel({type: 'queued'})
 const clockIcon = '◷'
-const spinnerIntervalMs = 100
-const idleTicks = 20
 const barWidth = 10
 const barFilled = '■'
 const barEmpty = '□'
@@ -28,16 +29,15 @@ const fullReset = '\u001b[0m'
 const softReset = '\u001b[39m\u001b[22m'
 const codeFence = /```[a-zA-Z0-9]*/g
 
-class SubagentRows implements Component {
+class SubagentRows extends Spinner implements Component {
     private rows: [string, string, string] = ['', '', '']
-    private timer: ReturnType<typeof setInterval> | undefined
-    private missedTicks = 0
 
-    frame = 0
     running = false
-    startedAt: number | undefined
 
-    constructor(private readonly requestRepaint: () => void) {}
+    // Spelled out because bun's coverage blames a synthesized constructor on the lines below it.
+    constructor(requestRepaint: () => void) {
+        super(requestRepaint)
+    }
 
     setRows(rows: [string, string, string]) {
         this.rows = rows
@@ -50,7 +50,7 @@ class SubagentRows implements Component {
     }
 
     render(width: number): string[] {
-        this.missedTicks = 0
+        this.painted()
 
         if (this.running) this.start()
         return this.rows.map(row =>
@@ -59,40 +59,6 @@ class SubagentRows implements Component {
     }
 
     invalidate() {}
-
-    elapsedMs(): number {
-        if (this.startedAt === undefined) return 0
-        return Date.now() - this.startedAt
-    }
-
-    start() {
-        if (this.timer !== undefined) return
-
-        const timer = setInterval(() => {
-            this.missedTicks += 1
-
-            if (this.missedTicks > idleTicks) {
-                this.stop()
-                return
-            }
-
-            this.frame = (this.frame + 1) % spinnerFrames.length
-            this.requestRepaint()
-        }, spinnerIntervalMs)
-        timer.unref?.()
-        this.timer = timer
-    }
-
-    isTicking(): boolean {
-        return this.timer !== undefined
-    }
-
-    stop() {
-        if (this.timer === undefined) return
-
-        clearInterval(this.timer)
-        this.timer = undefined
-    }
 }
 
 class CallSlot implements Component {
@@ -130,16 +96,6 @@ const rowsFor = (ctx: SubagentRenderContext): SubagentRows => {
 
     if (ctx.executionStarted && rows.startedAt === undefined) rows.startedAt = Date.now()
     return rows
-}
-
-const formatElapsed = (elapsedMs: number): string => {
-    const seconds = Math.max(0, Math.floor(elapsedMs / 1000))
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
-    const clock = `${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
-
-    if (hours === 0) return clock
-    return `${String(hours)}:${clock}`
 }
 
 const formatK = (tokens: number): string =>
@@ -246,6 +202,15 @@ const markdownFor = (state: SubagentRenderState, text: string): Markdown => {
     return markdown
 }
 
+// pi carries a partial result as text plus details, so only a turn brings details.
+const toolUpdate = (event: SubagentProgress): SubagentToolResult => ({
+    content: [{type: 'text', text: progressLabel(event)}],
+    details: event.type === 'turn' ? event.details : undefined
+})
+
+const toolProgress = (onUpdate: SubagentToolUpdate): SubagentUpdate =>
+    onUpdate === undefined ? undefined : event => onUpdate(toolUpdate(event))
+
 const renderCall = (
     name: string,
     title: string | undefined,
@@ -317,14 +282,11 @@ const renderResult = (
 export {
     CallSlot,
     clockIcon,
-    formatElapsed,
-    idleTicks,
     oneLine,
-    queued,
     renderCall,
     renderResult,
-    spinnerFrames,
-    spinnerIntervalMs,
-    SubagentRows
+    SubagentRows,
+    toolProgress,
+    toolUpdate
 }
 export type {SubagentRenderState}

@@ -17,7 +17,7 @@ const runSubagent = mock(
         Promise.resolve({text: answer, details})
 )
 let options: Partial<SubagentOptions> = {}
-const configuredOptions = mock((_nop: unknown, ctx: ExtensionContext, _tool: string) => ({
+const configuredOptions = mock((ctx: ExtensionContext, _tool: string) => ({
     ...options,
     cwd: ctx.cwd
 }))
@@ -25,7 +25,6 @@ const {SubagentErrors} = await import('../../../src/subagent/subagent')
 await mock.module('../../../src/subagent/subagent', () => ({
     runSubagent,
     configuredOptions,
-    safeConfig: () => ({}),
     SubagentErrors
 }))
 

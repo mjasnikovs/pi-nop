@@ -10,7 +10,7 @@ const answer = 'COVERED: no\nANSWER: answer\nEVIDENCE:'
 const details = {task: 'task', lastAssistantText: answer, elapsedMs: 1}
 const update = {content: [{type: 'text', text: 'partial'}], details}
 const runSubagent = mock((_task: string, _signal: unknown, onUpdate: SubagentUpdate) => {
-    onUpdate?.(update as Parameters<NonNullable<SubagentUpdate>>[0])
+    onUpdate?.({type: 'turn', text: 'partial', details: details as never})
     return Promise.resolve({text: answer, details})
 })
 const model = {contextWindow: 1000} as Model<Api>
@@ -21,13 +21,12 @@ const options = {
     thinkingLevel: 'low',
     model
 } as Partial<SubagentOptions>
-const configuredOptions = mock((_nop: unknown, _ctx: ExtensionContext, _tool: string) => options)
+const configuredOptions = mock((_ctx: ExtensionContext, _tool: string) => options)
 const {SubagentErrors} = await import('../../../src/subagent/subagent')
 const {FetchErrors} = await import('../../../src/subagent/fetch/errors')
 await mock.module('../../../src/subagent/subagent', () => ({
     runSubagent,
     configuredOptions,
-    safeConfig: () => ({}),
     SubagentErrors
 }))
 
@@ -76,11 +75,11 @@ describe('fetch tool', () => {
         const signal = new AbortController().signal
         const result = await tool().execute('id', params, signal, onUpdate, ctx)
         expect(fetchMock).toHaveBeenCalledWith('https://example.com/', {signal, headers: {}})
-        expect(configuredOptions).toHaveBeenCalledWith({}, ctx, 'subagent-fetch')
+        expect(configuredOptions).toHaveBeenCalledWith(ctx, 'subagent-fetch')
         expect(runSubagent).toHaveBeenCalledWith(
             buildTask('what', 'https://example.com/final', 'page'),
             signal,
-            onUpdate,
+            expect.any(Function),
             {...options, prompt: pagePrompt, tools: []}
         )
         expect(result).toEqual({

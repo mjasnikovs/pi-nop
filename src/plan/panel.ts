@@ -4,7 +4,7 @@ import type {SelectItem, SelectListTheme} from '@earendil-works/pi-tui'
 import {Input, Key, matchesKey, SelectList, wrapTextWithAnsi} from '@earendil-works/pi-tui'
 
 import type {Focusable} from '../config/box'
-import {formatElapsed, spinnerFrames, SubagentRows} from '../subagent/subagentTui'
+import {formatElapsed, Spinner, spinnerFrames} from '../tui/spinner'
 
 const steps = ['Goal', 'Questions', 'Steps', 'Hand over'] as const
 const escapeKey = Key.escape
@@ -69,7 +69,7 @@ const body = (theme: Theme, state: PanelState, width: number): string[] => {
 
 class PlanPanel implements Focusable {
     private readonly input = new Input({prompt: '> '})
-    private readonly rows: SubagentRows
+    private readonly spinner: Spinner
     private state: PanelState = {accepted: false, running: false, status: ''}
     private selected = 0
 
@@ -78,15 +78,19 @@ class PlanPanel implements Focusable {
         requestRepaint: () => void,
         private readonly actions: PanelActions
     ) {
-        this.rows = new SubagentRows(requestRepaint)
+        this.spinner = new Spinner(requestRepaint)
     }
 
     setState(state: PanelState): void {
-        if (state.running && !this.state.running) this.rows.startedAt = Date.now()
-        if (!state.running) this.rows.startedAt = undefined
+        if (state.running && !this.state.running) this.spinner.startedAt = Date.now()
+
+        if (!state.running) {
+            this.spinner.startedAt = undefined
+            this.spinner.stop()
+        }
+
         this.state = state
         this.selected = 0
-        this.rows.setRunning(state.running)
     }
 
     render(width: number): string[] {
@@ -173,18 +177,18 @@ class PlanPanel implements Focusable {
     private status(width: number): string[] {
         const {theme, state} = this
 
-        if (state.running) return [this.spinnerLine(width)]
+        if (state.running) return [this.spinnerLine()]
         if (state.error === undefined) return []
         return wrapTextWithAnsi(theme.fg('error', state.error), width)
     }
 
-    private spinnerLine(width: number): string {
-        // Rendering the rows keeps their spinner timer alive; only the frame is used here.
-        this.rows.render(width)
+    private spinnerLine(): string {
+        this.spinner.painted()
+        this.spinner.start()
         return (
-            this.theme.fg('accent', spinnerFrames[this.rows.frame] ?? '')
+            this.theme.fg('accent', spinnerFrames[this.spinner.frame] ?? '')
             + ' '
-            + this.theme.fg('muted', `subagent · ${formatElapsed(this.rows.elapsedMs())} · `)
+            + this.theme.fg('muted', `subagent · ${formatElapsed(this.spinner.elapsedMs())} · `)
             + this.theme.fg('toolOutput', this.state.status || 'starting…')
         )
     }

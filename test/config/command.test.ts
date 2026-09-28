@@ -30,18 +30,13 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({
     })
 }))
 
-const {loadConfig} = await import('../../src/config/config')
+const {applyChange, loadConfig} = await import('../../src/config/config')
 const {version} = JSON.parse(
     readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
 ) as {
     version: string
 }
-const {
-    applyChange,
-    dropStaleModels,
-    panelItems,
-    default: register
-} = await import('../../src/config/command')
+const {dropStaleModels, panelItems, default: register} = await import('../../src/config/command')
 const configPath = join(agentDir, 'pi-nop.json')
 
 type Command = Omit<RegisteredCommand, 'name' | 'sourceInfo'>
@@ -245,6 +240,7 @@ describe('applyChange', () => {
         const config = {concurrency: 2} as const
         expect(applyChange(config, 'staleMinutes', 'off')).toEqual({...config, staleMinutes: 'off'})
         expect(applyChange(config, 'staleMinutes', '20')).toEqual({...config, staleMinutes: 20})
+        expect(applyChange({...config, staleMinutes: 20}, 'staleMinutes', '10')).toEqual(config)
         expect(applyChange(config, 'toolCallMinutes', '5')).toEqual({
             ...config,
             toolCallMinutes: 5
@@ -444,10 +440,7 @@ describe('nop-config command', () => {
 
         panel.handleInput(enter)
         panel.handleInput(enter)
-        expect(loadConfig()).toEqual({
-            subagent: {thinkingLevel: 'low'},
-            'web-search': {engine: 'exa'}
-        })
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'low'}})
     })
 
     test('the concurrency row cycles through the levels and back to unlimited', async () => {

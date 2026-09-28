@@ -10,21 +10,20 @@ const actual = await import('@earendil-works/pi-coding-agent')
 await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgentDir}))
 
 const {
-    concurrencyKey,
-    concurrencyLevels,
-    guardDefaults,
-    off,
-    restartLevels,
-    staleMinutes,
-    toolCallMinutes,
-    defaultEngine,
-    engines,
+    applyChange,
+    concurrency,
+    engine,
     findModel,
     loadConfig,
+    modelOf,
     modelSpec,
+    read,
+    restarts,
     saveConfig,
-    searchTool,
-    thinkingLevels
+    settings,
+    staleMinutes,
+    thinkingOf,
+    toolCallMinutes
 } = await import('../../src/config/config')
 
 const configPath = join(agentDir, 'pi-nop.json')
@@ -111,48 +110,59 @@ describe('config', () => {
         expect(loadConfig()).toEqual({'web-search': {engine: 'ddg'}})
     })
 
-    test('accepts every concurrency level', () => {
-        for (const level of concurrencyLevels) {
-            writeFileSync(configPath, `{"concurrency":${level}}`)
+    test('every level of every setting round-trips through the file and reads back', () => {
+        for (const setting of settings) {
+            for (const level of setting.levels ?? ['acme/fast']) {
+                const config = applyChange({}, setting.id, String(level))
+                saveConfig(config)
 
-            expect(loadConfig()).toEqual({concurrency: level})
+                expect(loadConfig()).toEqual(config)
+                expect(read(loadConfig(), setting)).toBe(level)
+                expect(applyChange(config, setting.id, String(setting.fallback))).toEqual({})
+            }
+
+            expect(read({}, setting)).toBe(setting.fallback)
+            if (setting.levels !== undefined)
+                expect(() => applyChange({}, setting.id, 'nope')).toThrow('Parse')
         }
     })
 
-    test('accepts every guard level and off for the timers', () => {
-        for (const value of ['"off"', ...staleMinutes.map(String)]) {
-            writeFileSync(configPath, `{"staleMinutes":${value}}`)
-            expect(loadConfig()).toEqual({staleMinutes: JSON.parse(value)})
-        }
-
-        for (const value of ['"off"', ...toolCallMinutes.map(String)]) {
-            writeFileSync(configPath, `{"toolCallMinutes":${value}}`)
-            expect(loadConfig()).toEqual({toolCallMinutes: JSON.parse(value)})
-        }
-
-        for (const value of restartLevels) {
-            writeFileSync(configPath, `{"restarts":${value}}`)
-            expect(loadConfig()).toEqual({restarts: value})
-        }
+    test('rejects a row that is not a setting', () => {
+        expect(() => applyChange({}, 'nope', '1')).toThrow('Unknown setting: nope')
     })
 
-    test('pins the guard levels and their defaults', () => {
-        expect(staleMinutes).toEqual([5, 10, 20, 30])
-        expect(toolCallMinutes).toEqual([5, 10, 15, 30])
-        expect(restartLevels).toEqual([0, 1, 2, 3])
-        expect(guardDefaults).toEqual({staleMinutes: 10, toolCallMinutes: 15, restarts: 2})
-        expect(off).toBe('off')
-    })
-
-    test('lists every concurrency level under the concurrency key', () => {
-        expect(concurrencyLevels).toEqual([1, 2, 3, 4])
-        expect(concurrencyKey).toBe('concurrency')
-    })
-
-    test('lists every engine and defaults to exa', () => {
-        expect(engines).toEqual(['exa', 'brave', 'ddg'])
-        expect(defaultEngine).toBe('exa')
-        expect(searchTool).toBe('web-search')
+    test('declares the settings the panel and the readers share', () => {
+        expect(settings.map(setting => setting.id)).toEqual([
+            'subagent.model',
+            'subagent.thinkingLevel',
+            'subagent-fetch.model',
+            'subagent-fetch.thinkingLevel',
+            'subagent-docs.model',
+            'subagent-docs.thinkingLevel',
+            'web-search.engine',
+            'concurrency',
+            'staleMinutes',
+            'toolCallMinutes',
+            'restarts'
+        ])
+        expect(modelOf('subagent').fallback).toBe('inherit')
+        expect(thinkingOf('subagent').levels).toEqual([
+            'off',
+            'minimal',
+            'low',
+            'medium',
+            'high',
+            'xhigh',
+            'max'
+        ])
+        expect([engine.levels, engine.fallback]).toEqual([['exa', 'brave', 'ddg'], 'exa'])
+        expect([concurrency.levels, concurrency.fallback]).toEqual([[1, 2, 3, 4], 'unlimited'])
+        expect([staleMinutes.levels, staleMinutes.fallback]).toEqual([['off', 5, 10, 20, 30], 10])
+        expect([toolCallMinutes.levels, toolCallMinutes.fallback]).toEqual([
+            ['off', 5, 10, 15, 30],
+            15
+        ])
+        expect([restarts.levels, restarts.fallback]).toEqual([[0, 1, 2, 3], 2])
     })
 
     test('creates the agent dir when saving', () => {
@@ -170,10 +180,6 @@ describe('config', () => {
             '{\n  "subagent": {\n    "model": "acme/fast",\n    "thinkingLevel": "high"\n  }\n}\n'
         )
         expect(loadConfig()).toEqual({subagent: {model: 'acme/fast', thinkingLevel: 'high'}})
-    })
-
-    test('lists every thinking level', () => {
-        expect(thinkingLevels).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
     })
 
     test('formats a model as provider/id', () => {

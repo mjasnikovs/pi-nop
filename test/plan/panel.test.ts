@@ -70,7 +70,7 @@ describe('PlanPanel', () => {
 
     test('a running panel keeps its own clock', () => {
         panel.setState(state({request: 'fix it', running: true}))
-        panel['rows'].startedAt = Date.now() - 12_000
+        panel['spinner'].startedAt = Date.now() - 12_000
         expect(panel.render(width).join('\n')).toContain('subagent · 00:12 · starting…')
 
         panel.setState(state({request: 'fix it', running: true}))

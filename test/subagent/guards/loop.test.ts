@@ -2,7 +2,7 @@ import {describe, expect, test} from 'bun:test'
 
 import {createLoop} from '../../../src/subagent/guards/loop'
 import {createVisited} from '../../../src/subagent/guards/visited'
-import {start, trip, turnStart} from './fake'
+import {end, start, trip, turnStart} from './fake'
 
 const loop = () => {
     const onTrip = trip()
@@ -31,7 +31,7 @@ describe('createLoop', () => {
         expect(hit.id).toBe('loop')
         expect(hit.hint).toContain('grep({"pattern":"x","path":"src"}) 5 times')
         expect(hit.hint).toContain('last 20 tool calls')
-        expect(hit.hint).not.toContain('already read')
+        expect(hit.hint).not.toContain('Its reads')
     })
 
     test('forgets calls that fall out of the window', () => {
@@ -67,6 +67,20 @@ describe('createLoop', () => {
         const {onTrip, send} = loop()
         send(start('read', {path: 'big.d.ts'}))
         for (let i = 1; i < 8; i += 1) send(start('read', {path: 'big.d.ts', offset: 2000 * i + 1}))
+
+        expect(onTrip).not.toHaveBeenCalled()
+    })
+
+    test('paging past where the byte cap cut a read is progress', () => {
+        const {onTrip, send} = loop()
+        send(start('read', {path: 'big.ts'}))
+        send(end('read', {path: 'big.ts'}, {details: {truncation: {outputLines: 1300}}}))
+
+        for (let i = 0; i < 6; i += 1) {
+            const offset = 1301 + i * 100
+            send(start('read', {path: 'big.ts', offset, limit: 100}))
+            send(end('read', {path: 'big.ts', offset, limit: 100}))
+        }
 
         expect(onTrip).not.toHaveBeenCalled()
     })
