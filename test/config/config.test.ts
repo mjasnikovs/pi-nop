@@ -12,6 +12,11 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({...actual, getAgent
 const {
     concurrencyKey,
     concurrencyLevels,
+    guardDefaults,
+    off,
+    restartLevels,
+    staleMinutes,
+    toolCallMinutes,
     defaultEngine,
     engines,
     findModel,
@@ -62,6 +67,14 @@ describe('config', () => {
             '{"concurrency":"2"}',
             '{"concurrency":2.5}',
             '{"concurrency":null}',
+            '{"staleMinutes":0}',
+            '{"staleMinutes":"5"}',
+            '{"staleMinutes":"on"}',
+            '{"toolCallMinutes":20}',
+            '{"toolCallMinutes":null}',
+            '{"restarts":4}',
+            '{"restarts":"off"}',
+            '{"restarts":1.5}',
             '[]',
             '{"subagent":null}',
             '{"subagent":[]}'
@@ -104,6 +117,31 @@ describe('config', () => {
 
             expect(loadConfig()).toEqual({concurrency: level})
         }
+    })
+
+    test('accepts every guard level and off for the timers', () => {
+        for (const value of ['"off"', ...staleMinutes.map(String)]) {
+            writeFileSync(configPath, `{"staleMinutes":${value}}`)
+            expect(loadConfig()).toEqual({staleMinutes: JSON.parse(value)})
+        }
+
+        for (const value of ['"off"', ...toolCallMinutes.map(String)]) {
+            writeFileSync(configPath, `{"toolCallMinutes":${value}}`)
+            expect(loadConfig()).toEqual({toolCallMinutes: JSON.parse(value)})
+        }
+
+        for (const value of restartLevels) {
+            writeFileSync(configPath, `{"restarts":${value}}`)
+            expect(loadConfig()).toEqual({restarts: value})
+        }
+    })
+
+    test('pins the guard levels and their defaults', () => {
+        expect(staleMinutes).toEqual([5, 10, 20, 30])
+        expect(toolCallMinutes).toEqual([5, 10, 15, 30])
+        expect(restartLevels).toEqual([0, 1, 2, 3])
+        expect(guardDefaults).toEqual({staleMinutes: 10, toolCallMinutes: 15, restarts: 2})
+        expect(off).toBe('off')
     })
 
     test('lists every concurrency level under the concurrency key', () => {

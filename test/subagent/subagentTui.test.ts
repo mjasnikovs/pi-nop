@@ -49,6 +49,7 @@ const details = (over: Partial<SubagentDetails> = {}): SubagentDetails =>
         task: 'find the auth flow',
         lastAssistantText: 'Checking src/auth/session.ts',
         elapsedMs: 10_000,
+        restarts: 0,
         ...over
     }) as SubagentDetails
 
@@ -171,6 +172,18 @@ describe('subagent tui', () => {
         expect(out).toHaveLength(3)
         expect(out[1]).toBe('  Checking src/auth/session.ts')
         expect(out[2]).toBe('  TIME 00:10 • TURN 12 • ■□□□□□□□□□ 10/120k')
+    })
+
+    test('a restarted run shows the restart count', () => {
+        const out = lines(
+            renderResult(
+                partial({restarts: 2}),
+                {expanded: false, isPartial: true},
+                theme,
+                makeContext() as never
+            )
+        )
+        expect(out[2]).toBe('  TIME 00:10 • TURN 12 • RESTART 2 • ■□□□□□□□□□ 10/120k')
     })
 
     test('a queued call shows a still clock, no spinner, and holds TIME at zero', async () => {

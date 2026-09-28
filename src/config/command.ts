@@ -4,6 +4,7 @@ import type {SettingItem} from '@earendil-works/pi-tui'
 import {SelectList, SettingsList} from '@earendil-works/pi-tui'
 import type {ThinkingLevel} from '@earendil-works/pi-agent-core'
 import {readFileSync} from 'node:fs'
+import type {TSchema} from 'typebox'
 import Value from 'typebox/value'
 
 import {boxed} from './box'
@@ -14,12 +15,20 @@ import {
     concurrencySchema,
     defaultEngine,
     engines,
+    guardDefaults,
     loadConfig,
     modelSpec,
+    off,
+    restartLevels,
+    restartsSchema,
     saveConfig,
     searchSchema,
     searchTool,
+    staleMinutes,
+    staleSchema,
     thinkingLevels,
+    toolCallMinutes,
+    toolCallSchema,
     tools
 } from './config'
 import {gap, header, settable, skipInert} from './sections'
@@ -27,6 +36,48 @@ import type {NopConfig, NopTool, ToolConfig} from './config'
 
 const inherit = 'inherit'
 const unlimited = 'unlimited'
+const guardsSection = 'guards'
+
+type GuardKey = keyof typeof guardDefaults
+
+type GuardRow = {
+    key: GuardKey
+    label: string
+    description: string
+    values: string[]
+    schema: TSchema
+}
+
+const guardRows: GuardRow[] = [
+    {
+        key: 'staleMinutes',
+        label: 'no model output for',
+        description:
+            'Kill the run when the model sends nothing for this long. Includes the time a local '
+            + 'model spends reading a long prompt.',
+        values: [off, ...staleMinutes.map(String)],
+        schema: staleSchema
+    },
+    {
+        key: 'toolCallMinutes',
+        label: 'one tool call runs for',
+        description:
+            'Kill the run when a single read, grep, find or ls does not return in this time.',
+        values: [off, ...toolCallMinutes.map(String)],
+        schema: toolCallSchema
+    },
+    {
+        key: 'restarts',
+        label: 'restarts after a kill',
+        description:
+            'How many times a killed run starts again with a hint about what went wrong. '
+            + '0 keeps the guards and fails on the first kill.',
+        values: restartLevels.map(String),
+        schema: restartsSchema
+    }
+]
+
+const level = (value: string): string | number => (value === off ? off : Number(value))
 const maxVisible = 10
 // Two levels up from both src/config and dist/config, so the built package reads the same file.
 const packageJson = new URL('../../package.json', import.meta.url)
@@ -93,7 +144,16 @@ const panelItems = (config: NopConfig, models: string[], paint = same): SettingI
         label: 'subagents at once',
         currentValue: String(config[concurrencyKey] ?? unlimited),
         values: [unlimited, ...concurrencyLevels.map(String)]
-    }
+    },
+    gap(guardsSection),
+    header(guardsSection, paint),
+    ...guardRows.map(row => ({
+        id: row.key,
+        label: row.label,
+        description: row.description,
+        currentValue: String(config[row.key] ?? guardDefaults[row.key]),
+        values: row.values
+    }))
 ]
 
 const withTool = (config: NopConfig, tool: NopTool, entry: ToolConfig): NopConfig => {
@@ -110,6 +170,10 @@ const applyChange = (config: NopConfig, id: string, value: string): NopConfig =>
         if (value === unlimited) return rest
         return {...rest, [concurrencyKey]: Value.Parse(concurrencySchema, Number(value))}
     }
+
+    const guard = guardRows.find(row => row.key === id)
+    if (guard !== undefined)
+        return {...config, [guard.key]: Value.Parse(guard.schema, level(value))}
 
     const [tool, field] = parseRowId(id)
     const {[field]: _dropped, ...entry} = config[tool] ?? {}
@@ -152,7 +216,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerCommand('nop-config', {
         description:
             'Choose the model and thinking level for each subagent tool, the web search engine, '
-            + 'and how many subagents run at once',
+            + 'how many subagents run at once, and the guards that stop a stuck run',
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)

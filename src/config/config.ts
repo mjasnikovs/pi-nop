@@ -36,13 +36,26 @@ const searchTool = 'web-search'
 const concurrencyLevels = [1, 2, 3, 4] as const
 const concurrencySchema = Type.Enum(concurrencyLevels)
 const concurrencyKey = 'concurrency'
+const off = 'off'
+const staleMinutes = [5, 10, 20, 30] as const
+const toolCallMinutes = [5, 10, 15, 30] as const
+const restartLevels = [0, 1, 2, 3] as const
+const staleSchema = Type.Union([Type.Literal(off), Type.Enum(staleMinutes)])
+const toolCallSchema = Type.Union([Type.Literal(off), Type.Enum(toolCallMinutes)])
+const restartsSchema = Type.Enum(restartLevels)
+// MAGIC NUMBER: pi-task's defaults. Ten idle minutes outlasts a local model's prefill of a long
+// page, fifteen covers a grep over a large tree, and a third restart stopped helping there.
+const guardDefaults = {staleMinutes: 10, toolCallMinutes: 15, restarts: 2} as const
 const configSchema = Type.Object(
     {
         subagent: Type.Optional(toolSchema),
         'subagent-fetch': Type.Optional(toolSchema),
         'subagent-docs': Type.Optional(toolSchema),
         [searchTool]: Type.Optional(searchSchema),
-        [concurrencyKey]: Type.Optional(concurrencySchema)
+        [concurrencyKey]: Type.Optional(concurrencySchema),
+        staleMinutes: Type.Optional(staleSchema),
+        toolCallMinutes: Type.Optional(toolCallSchema),
+        restarts: Type.Optional(restartsSchema)
     },
     {additionalProperties: false}
 )
@@ -81,12 +94,20 @@ export {
     engines,
     engineSchema,
     findModel,
+    guardDefaults,
     loadConfig,
     modelSpec,
+    off,
+    restartLevels,
+    restartsSchema,
     saveConfig,
     searchSchema,
     searchTool,
+    staleMinutes,
+    staleSchema,
     thinkingLevels,
+    toolCallMinutes,
+    toolCallSchema,
     tools
 }
 export type {EngineName, NopConfig, NopTool, SearchConfig, ToolConfig}

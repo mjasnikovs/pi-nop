@@ -18,6 +18,9 @@ import {type Static, type TObject, Type} from 'typebox'
 
 import {brokenConfig, findModel, loadConfig} from '../config/config'
 import type {NopConfig, NopTool} from '../config/config'
+import type {GuardHit} from './guards/guard'
+import type {GuardSettings} from './guards/guards'
+import {guardSettings, watchGuards} from './guards/guards'
 import {slots} from './slots'
 import {queued, renderCall, renderResult} from './subagentTui'
 
@@ -28,7 +31,8 @@ enum SubagentErrors {
     NoModel = 'No model selected',
     Truncated = 'Subagent output cut off at the model output limit',
     Compacted = 'Subagent context was compacted, so its answer would not rest on its source',
-    Disposed = 'Subagent session was closed'
+    Disposed = 'Subagent session was closed',
+    Killed = 'Subagent killed by the guard: '
 }
 
 enum SubagentTools {
@@ -51,6 +55,7 @@ type SubagentDetails = SessionStats
         task: string
         lastAssistantText: string
         elapsedMs: number
+        restarts: number
     }
 
 type SubagentResult = {
@@ -81,7 +86,8 @@ const buildDetails = (
     task: string,
     last: AssistantMessage,
     lastAssistantText: string,
-    startedAt: number
+    startedAt: number,
+    restarts: number
 ): SubagentDetails => ({
     ...stats,
     model: last.model,
@@ -90,7 +96,8 @@ const buildDetails = (
     timestamp: last.timestamp,
     task,
     lastAssistantText,
-    elapsedMs: performance.now() - startedAt
+    elapsedMs: performance.now() - startedAt,
+    restarts
 })
 
 const defaultOptions = (cwd: string): SubagentOptions => ({
@@ -99,6 +106,7 @@ const defaultOptions = (cwd: string): SubagentOptions => ({
     tools: [SubagentTools.Read, SubagentTools.Grep, SubagentTools.Find, SubagentTools.Ls]
 })
 
+// Read on every prompt, so a session kept open still follows the current settings.
 const readConfig = (): NopConfig | undefined => {
     try {
         return loadConfig()
@@ -113,9 +121,6 @@ const safeConfig = (ctx: ExtensionContext): NopConfig => {
     if (config === undefined) ctx.ui.notify(brokenConfig, 'warning')
     return config ?? {}
 }
-
-// Read on every prompt, so a session kept open still follows the current setting.
-const concurrencyCap = (): number => readConfig()?.concurrency ?? Number.POSITIVE_INFINITY
 
 const configuredOptions = (
     nop: NopConfig,
@@ -175,6 +180,7 @@ const watchTurn = (
     session: AgentSession,
     task: string,
     startedAt: number,
+    restarts: number,
     onUpdate: SubagentUpdate
 ): {watch: TurnWatch; stop: () => void} => {
     const watch: TurnWatch = {compacted: false}
@@ -198,11 +204,52 @@ const watchTurn = (
             task,
             event.message,
             lastText,
-            startedAt
+            startedAt,
+            restarts
         )
         onUpdate?.({content: [{type: 'text', text: lastText}], details})
     })
     return {watch, stop}
+}
+
+type Attempt = {
+    watch: TurnWatch
+    hit: GuardHit | undefined
+    /** Drops the attempt's messages, pi's own branch pattern, so the next one starts clean. */
+    rewind: () => void
+}
+
+const runAttempt = async (
+    session: AgentSession,
+    text: string,
+    task: string,
+    startedAt: number,
+    restarts: number,
+    onUpdate: SubagentUpdate,
+    settings: GuardSettings,
+    contextWindow: number
+): Promise<Attempt> => {
+    const leaf = session.sessionManager.getLeafId()
+    const messages = [...session.agent.state.messages]
+    const {watch, stop} = watchTurn(session, task, startedAt, restarts, onUpdate)
+    const guards = watchGuards(session, settings, contextWindow)
+
+    try {
+        await session.prompt(text, {expandPromptTemplates: false})
+    } finally {
+        stop()
+        guards.stop()
+    }
+
+    return {
+        watch,
+        hit: guards.hit(),
+        rewind: () => {
+            if (leaf === null) session.sessionManager.resetLeaf()
+            else session.sessionManager.branch(leaf)
+            session.agent.state.messages = messages
+        }
+    }
 }
 
 const answerText = (last: AssistantMessage): string => {
@@ -249,7 +296,8 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
     const turn = async (
         task: string,
         signal: AbortSignal | undefined,
-        onUpdate: SubagentUpdate
+        onUpdate: SubagentUpdate,
+        settings: GuardSettings
     ): Promise<SubagentResult> => {
         const startedAt = performance.now()
 
@@ -258,37 +306,63 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
 
         opening ??= open()
         const current = await opening
+        const contextWindow = current.model?.contextWindow ?? 0
 
         const onAbort = () => {
             void current.abort()
         }
         signal?.addEventListener('abort', onAbort, {once: true})
 
-        const {watch, stop} = watchTurn(current, task, startedAt, onUpdate)
-
         try {
-            if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
+            let text = task
 
-            await current.prompt(task, {expandPromptTemplates: false})
+            for (let restarts = 0; ; restarts += 1) {
+                if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
-            if (disposed) throw new Error(SubagentErrors.Disposed)
-            if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
+                const {watch, hit, rewind} = await runAttempt(
+                    current,
+                    text,
+                    task,
+                    startedAt,
+                    restarts,
+                    onUpdate,
+                    settings,
+                    contextWindow
+                )
 
-            if (watch.compacted) {
-                dispose()
-                throw new Error(SubagentErrors.Compacted)
-            }
+                if (disposed) throw new Error(SubagentErrors.Disposed)
+                if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
-            if (watch.last === undefined) throw new Error(SubagentErrors.EmptyOutput)
+                if (watch.compacted) {
+                    dispose()
+                    throw new Error(SubagentErrors.Compacted)
+                }
 
-            const text = answerText(watch.last)
-            return {
-                text,
-                details: buildDetails(current.getSessionStats(), task, watch.last, text, startedAt)
+                if (hit === undefined) {
+                    if (watch.last === undefined) throw new Error(SubagentErrors.EmptyOutput)
+
+                    const answer = answerText(watch.last)
+                    return {
+                        text: answer,
+                        details: buildDetails(
+                            current.getSessionStats(),
+                            task,
+                            watch.last,
+                            answer,
+                            startedAt,
+                            restarts
+                        )
+                    }
+                }
+
+                if (restarts >= settings.restarts) throw new Error(SubagentErrors.Killed + hit.id)
+
+                rewind()
+                status(onUpdate, `restarting: ${hit.id}`)
+                text = [hit.hint, task].join('\n\n')
             }
         } finally {
             signal?.removeEventListener('abort', onAbort)
-            stop()
         }
     }
 
@@ -298,12 +372,13 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         onUpdate: SubagentUpdate
     ): Promise<SubagentResult> => {
         let waited = false
-        slots.setCap(concurrencyCap())
+        const nop = readConfig() ?? {}
+        slots.setCap(nop.concurrency ?? Number.POSITIVE_INFINITY)
         return slots.run(
             () => {
                 // Clears "queued…" so the row falls back to "starting…" while the session loads.
                 if (waited) status(onUpdate, '')
-                return turn(task, signal, onUpdate)
+                return turn(task, signal, onUpdate, guardSettings(nop))
             },
             () => {
                 waited = true

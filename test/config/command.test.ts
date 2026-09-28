@@ -125,8 +125,28 @@ describe('panelItems', () => {
             ['web-search.engine', 'engine', 'exa'],
             ['gap:concurrency', '', ''],
             ['header:concurrency', '<CONCURRENCY>', ''],
-            ['concurrency', 'subagents at once', 'unlimited']
+            ['concurrency', 'subagents at once', 'unlimited'],
+            ['gap:guards', '', ''],
+            ['header:guards', '<GUARDS>', ''],
+            ['staleMinutes', 'no model output for', '10'],
+            ['toolCallMinutes', 'one tool call runs for', '15'],
+            ['restarts', 'restarts after a kill', '2']
         ])
+        expect(items[19]?.values).toEqual(['off', '5', '10', '20', '30'])
+        expect(items[20]?.values).toEqual(['off', '5', '10', '15', '30'])
+        expect(items[21]?.values).toEqual(['0', '1', '2', '3'])
+        expect(items.slice(19).map(item => item.description)).toEqual([
+            'Kill the run when the model sends nothing for this long. Includes the time a local '
+                + 'model spends reading a long prompt.',
+            'Kill the run when a single read, grep, find or ls does not return in this time.',
+            'How many times a killed run starts again with a hint about what went wrong. '
+                + '0 keeps the guards and fails on the first kill.'
+        ])
+        expect(
+            panelItems({staleMinutes: 'off', toolCallMinutes: 5, restarts: 0}, models)
+                .slice(19)
+                .map(item => item.currentValue)
+        ).toEqual(['off', '5', '0'])
         expect(items[13]?.values).toEqual(['exa', 'brave', 'ddg'])
         expect(items[16]?.values).toEqual(['unlimited', '1', '2', '3', '4'])
         expect(panelItems({concurrency: 3}, models)[16]?.currentValue).toBe('3')
@@ -221,6 +241,19 @@ describe('applyChange', () => {
         expect(() => applyChange(config, 'concurrency', '9')).toThrow('Parse')
     })
 
+    test('sets a guard level, off included, and rejects a level off the list', () => {
+        const config = {concurrency: 2} as const
+        expect(applyChange(config, 'staleMinutes', 'off')).toEqual({...config, staleMinutes: 'off'})
+        expect(applyChange(config, 'staleMinutes', '20')).toEqual({...config, staleMinutes: 20})
+        expect(applyChange(config, 'toolCallMinutes', '5')).toEqual({
+            ...config,
+            toolCallMinutes: 5
+        })
+        expect(applyChange(config, 'restarts', '0')).toEqual({...config, restarts: 0})
+        expect(() => applyChange(config, 'staleMinutes', '7')).toThrow('Parse')
+        expect(() => applyChange(config, 'restarts', 'off')).toThrow('Parse')
+    })
+
     test('inherit clears the field and drops an emptied tool', () => {
         const config = {subagent: {model: 'acme/fast', thinkingLevel: 'low'}} as const
         expect(applyChange(config, 'subagent.model', 'inherit')).toEqual({
@@ -271,7 +304,7 @@ describe('nop-config command', () => {
     test('describes itself', () => {
         expect(registered().description).toBe(
             'Choose the model and thinking level for each subagent tool, the web search engine, '
-                + 'and how many subagents run at once'
+                + 'how many subagents run at once, and the guards that stop a stuck run'
         )
     })
 
@@ -289,7 +322,10 @@ describe('nop-config command', () => {
                 + 'subagent-docs.model: inherit\n'
                 + 'subagent-docs.thinkingLevel: inherit\n'
                 + 'web-search.engine: exa\n'
-                + 'concurrency: unlimited',
+                + 'concurrency: unlimited\n'
+                + 'staleMinutes: 10\n'
+                + 'toolCallMinutes: 15\n'
+                + 'restarts: 2',
             'info'
         )
     })
@@ -308,7 +344,10 @@ describe('nop-config command', () => {
                 + 'subagent-docs.model: inherit\n'
                 + 'subagent-docs.thinkingLevel: inherit\n'
                 + 'web-search.engine: exa\n'
-                + 'concurrency: unlimited'
+                + 'concurrency: unlimited\n'
+                + 'staleMinutes: 10\n'
+                + 'toolCallMinutes: 15\n'
+                + 'restarts: 2'
         )
     })
 
@@ -422,6 +461,21 @@ describe('nop-config command', () => {
 
         panel.handleInput(enter)
         expect(loadConfig()).toEqual({})
+    })
+
+    test('the guard rows cycle through their levels', async () => {
+        const {panel} = await openPanel()
+        for (let i = 0; i < 8; i += 1) panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({staleMinutes: 20})
+
+        panel.handleInput(down)
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({staleMinutes: 20, restarts: 3})
+
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({staleMinutes: 20, restarts: 0})
     })
 
     test('writes nothing until a row changes', async () => {

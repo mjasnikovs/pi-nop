@@ -23,7 +23,13 @@ type FakeSession = {
     getSessionStats: ReturnType<typeof mock>
     subscribe: ReturnType<typeof mock>
     unsubscribe: ReturnType<typeof mock>
-    emit: (event: {type: string; message?: unknown}) => void
+    sessionManager: {
+        getLeafId: ReturnType<typeof mock>
+        branch: ReturnType<typeof mock>
+        resetLeaf: ReturnType<typeof mock>
+    }
+    agent: {state: {messages: unknown[]}}
+    emit: (event: {type: string} & Record<string, unknown>) => void
     emitAssistant: () => void
 }
 
@@ -77,9 +83,18 @@ const makeSession = (): FakeSession => {
         getSessionStats: mock(() => stats),
         subscribe: mock((listener: (event: {type: string}) => void) => {
             listeners.push(listener)
-            return unsubscribe
+            return () => {
+                unsubscribe()
+                listeners.splice(listeners.indexOf(listener), 1)
+            }
         }),
         unsubscribe,
+        sessionManager: {
+            getLeafId: mock(() => 'leaf-1'),
+            branch: mock((_id: string) => undefined),
+            resetLeaf: mock(() => undefined)
+        },
+        agent: {state: {messages: [{role: 'user'}]}},
         emit: event => {
             for (const listener of listeners) listener(event)
         },
@@ -159,7 +174,8 @@ const expectedDetails = {
     timestamp: 1700000000000,
     task: 'task',
     lastAssistantText: 'hello',
-    elapsedMs: 0
+    elapsedMs: 0,
+    restarts: 0
 }
 describe('runSubagent', () => {
     test('returns text and details on a clean stop', async () => {
@@ -253,7 +269,7 @@ describe('runSubagent', () => {
         )
         expect(seen).toEqual([{...expectedDetails, lastAssistantText: 'partial'}, expectedDetails])
         expect(result.details).toEqual(expectedDetails)
-        expect(session.unsubscribe).toHaveBeenCalledTimes(1)
+        expect(session.unsubscribe).toHaveBeenCalledTimes(2)
     })
 
     test('keeps the last text when a tool-only turn has none', async () => {
@@ -563,6 +579,150 @@ describe('subagentSession', () => {
         held.shift()?.()
         await second
         expect(session.prompt).toHaveBeenLastCalledWith('two', {expandPromptTemplates: false})
+    })
+})
+
+describe('guards', () => {
+    const loopCall = {
+        type: 'tool_execution_start',
+        toolCallId: 'c',
+        toolName: 'ls',
+        args: {path: '.'}
+    }
+
+    // The model repeats one call until the loop guard aborts it. Then the next prompt answers.
+    const loopOnce = () => {
+        session.onPrompt = () => {
+            for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+            session.messages = [assistant({stopReason: 'aborted'})]
+            session.agent.state.messages.push({role: 'assistant'})
+
+            session.onPrompt = () => {
+                session.messages = [assistant()]
+                return Promise.resolve()
+            }
+            return Promise.resolve()
+        }
+    }
+    test('a loop kill rewinds the session and prompts again with the hint', async () => {
+        loopOnce()
+        const updates: unknown[] = []
+        const result = await runSubagent(
+            'task',
+            undefined,
+            update => updates.push(update),
+            sessionOptions
+        )
+        expect(result.text).toBe('hello')
+        expect(result.details.restarts).toBe(1)
+        expect(session.abort).toHaveBeenCalledTimes(1)
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+        const [second] = session.prompt.mock.calls[1] as [string]
+        expect(second).toStartWith(
+            '[SYSTEM NOTE: Your previous attempt called ls({"path":"."}) 5 times'
+        )
+        expect(second).toEndWith('\n\ntask')
+        expect(session.sessionManager.branch).toHaveBeenCalledWith('leaf-1')
+        expect(session.sessionManager.resetLeaf).not.toHaveBeenCalled()
+        expect(session.agent.state.messages).toEqual([{role: 'user'}])
+        expect(updates).toEqual([
+            {
+                content: [{type: 'text', text: 'hello'}],
+                details: {...expectedDetails, stopReason: 'aborted', lastAssistantText: 'hello'}
+            },
+            {content: [{type: 'text', text: 'restarting: loop'}], details: undefined},
+            {content: [{type: 'text', text: 'hello'}], details: {...expectedDetails, restarts: 1}}
+        ])
+        expect(createAgentSession).toHaveBeenCalledTimes(1)
+    })
+
+    test('a session with no entries yet is rewound to its root', async () => {
+        loopOnce()
+        session.sessionManager.getLeafId.mockReturnValueOnce(null)
+        await runSubagent('task', undefined, noProgress, sessionOptions)
+
+        expect(session.sessionManager.resetLeaf).toHaveBeenCalledTimes(1)
+        expect(session.sessionManager.branch).not.toHaveBeenCalled()
+    })
+
+    test('fails once the restarts are spent', async () => {
+        saveConfig({restarts: 1})
+
+        session.onPrompt = () => {
+            for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+            session.messages = [assistant({stopReason: 'aborted'})]
+            return Promise.resolve()
+        }
+
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
+            'Subagent killed by the guard: loop'
+        )
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+        expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    test('with restarts at 0 the guards still kill, on the first hit', async () => {
+        saveConfig({restarts: 0})
+        loopOnce()
+
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
+            'Subagent killed by the guard: loop'
+        )
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+        expect(session.sessionManager.branch).not.toHaveBeenCalled()
+    })
+
+    test('a caller abort during a killed attempt is reported as an abort', async () => {
+        const controller = new AbortController()
+        session.onPrompt = () => {
+            for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+            controller.abort()
+            session.messages = [assistant({stopReason: 'aborted'})]
+            return Promise.resolve()
+        }
+
+        await expect(
+            runSubagent('task', controller.signal, noProgress, sessionOptions)
+        ).rejects.toThrow('Subagent aborted')
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+    })
+
+    test('a restart keeps the slot it holds', async () => {
+        saveConfig({concurrency: 1})
+        loopOnce()
+        const first = runSubagent('one', undefined, noProgress, sessionOptions)
+        const second = runSubagent('two', undefined, noProgress, sessionOptions)
+        await first
+        expect(createAgentSession).toHaveBeenCalledTimes(1)
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+
+        await second
+        expect(createAgentSession).toHaveBeenCalledTimes(2)
+    })
+
+    test('the context window comes from the session model', async () => {
+        ;(session as unknown as {model: unknown}).model = {contextWindow: 10}
+
+        session.onPrompt = () => {
+            session.emit({
+                type: 'tool_execution_end',
+                toolCallId: 'c',
+                toolName: 'read',
+                result: {content: [{type: 'text', text: 'x'.repeat(100)}]},
+                isError: false
+            })
+            session.messages = [assistant({stopReason: 'aborted'})]
+
+            session.onPrompt = () => {
+                session.messages = [assistant()]
+                return Promise.resolve()
+            }
+            return Promise.resolve()
+        }
+
+        const result = await runSubagent('task', undefined, noProgress, sessionOptions)
+        expect(result.details.restarts).toBe(1)
+        expect((session.prompt.mock.calls[1] as [string])[0]).toContain('context window')
     })
 })
 

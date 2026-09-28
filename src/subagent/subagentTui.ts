@@ -200,6 +200,9 @@ const phaseFor = (
     return 'done'
 }
 
+const restartsLabel = (theme: Theme, restarts: number): string =>
+    restarts === 0 ? '' : theme.fg('muted', ' • RESTART ') + theme.fg('dim', String(restarts))
+
 const buildRows = (
     name: string,
     title: string | undefined,
@@ -225,6 +228,7 @@ const buildRows = (
             + theme.fg('dim', formatElapsed(elapsedMs))
             + theme.fg('muted', ' • TURN ')
             + theme.fg('dim', String(details?.assistantMessages ?? 0))
+            + restartsLabel(theme, details?.restarts ?? 0)
             + theme.fg('muted', ' • ')
             + theme.fg('accent', bar)
             + ' '
