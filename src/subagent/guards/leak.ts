@@ -1,3 +1,4 @@
+import type {AssistantMessage} from '@earendil-works/pi-ai'
 import {contentText} from '@earendil-works/pi-ai'
 
 import type {Guard, Trip} from './guard'
@@ -22,15 +23,17 @@ const leakedMarker = (answer: string): string | undefined => {
     return parameterTag.test(text) ? functionTag.exec(text)?.[1] : undefined
 }
 
+// A cut-off or failed run is reported as that, not as a leak.
+const checked = new Set<AssistantMessage['stopReason']>(['stop', 'toolUse'])
+
 // Checked once the run ended on its own: a leak is text the model wrote instead of a tool call.
 const createLeak = (trip: Trip): Guard => ({
     onEvent: event => {
         if (event.type !== 'agent_end') return
         const last = event.messages.findLast(message => message.role === 'assistant')
 
-        if (last === undefined || last.stopReason === 'error' || last.stopReason === 'aborted')
-            return
-        const marker = leakedMarker(contentText(last.content, ''))
+        if (last === undefined || !checked.has(last.stopReason)) return
+        const marker = leakedMarker(contentText(last.content))
         if (marker !== undefined) trip({id: 'leak', hint: leakHint(marker)})
     },
     dispose: noop

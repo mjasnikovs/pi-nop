@@ -24,6 +24,19 @@ describe('readCall', () => {
         })
     })
 
+    test('takes the numeric strings pi coerces before the tool runs', () => {
+        expect(readCall('read', {path: 'a.ts', offset: '2001', limit: '100'})).toEqual({
+            path: 'a.ts',
+            from: 2001,
+            to: 2100
+        })
+        expect(readCall('read', {path: 'a.ts', offset: 'ten', limit: ' '})).toEqual({
+            path: 'a.ts',
+            from: 1,
+            to: 2000
+        })
+    })
+
     test('is undefined for other tools and malformed args', () => {
         expect(readCall('grep', {path: 'a.ts'})).toBeUndefined()
         expect(readCall('read', {})).toBeUndefined()
@@ -35,14 +48,21 @@ describe('readCall', () => {
 describe('readEnd', () => {
     const call = {path: 'a.ts', from: 1, to: 2000}
     test('keeps the span when the read was not cut short', () => {
-        expect(readEnd(call, undefined)).toEqual(call)
-        expect(readEnd(call, {content: [], details: undefined})).toEqual(call)
-        expect(readEnd(call, {content: [], details: truncated(0)})).toEqual(call)
-        expect(readEnd(call, {content: [], details: truncated(2000)})).toEqual(call)
+        expect(readEnd(call, undefined, false)).toEqual(call)
+        expect(readEnd(call, {content: [], details: undefined}, false)).toEqual(call)
+        expect(readEnd(call, {content: [], details: truncated(2000)}, false)).toEqual(call)
     })
 
     test('ends the span at the last line pi returned', () => {
-        expect(readEnd(call, {content: [], details: truncated(1300)})).toEqual({...call, to: 1300})
+        expect(readEnd(call, {content: [], details: truncated(1300)}, false)).toEqual({
+            ...call,
+            to: 1300
+        })
+    })
+
+    test('an error or a first line past the byte cap read no lines', () => {
+        expect(readEnd(call, {content: []}, true)).toBeUndefined()
+        expect(readEnd(call, {content: [], details: truncated(0)}, false)).toBeUndefined()
     })
 })
 
@@ -52,9 +72,13 @@ describe('createVisited', () => {
         visited.onEvent(start('read', {path: 'a.ts'}))
         visited.onEvent(end('read', {path: 'a.ts'}))
         visited.onEvent(start('read', {path: 'a.ts'}))
+        visited.onEvent(end('read', {path: 'a.ts'}))
         visited.onEvent(start('read', {path: 'a.ts', offset: 5, limit: 10}))
+        visited.onEvent(end('read', {path: 'a.ts', offset: 5, limit: 10}))
         visited.onEvent(start('grep', {path: 'a.ts', pattern: 'x'}))
+        visited.onEvent(end('grep', {path: 'a.ts', pattern: 'x'}))
         visited.onEvent(start('read', {path: 'b.ts', offset: 2}))
+        visited.onEvent(end('read', {path: 'b.ts', offset: 2}))
         visited.dispose()
 
         expect(visited.list()).toBe(
@@ -73,13 +97,27 @@ describe('createVisited', () => {
         expect(visited.list()).toBe(' Its reads, gone with it: a.ts (lines 1-1300, 1301-3300).')
     })
 
+    test('skips a read that errored or never returned', () => {
+        const visited = createVisited()
+        visited.onEvent(start('read', {path: 'missing.ts'}))
+        visited.onEvent(end('read', {path: 'missing.ts'}, {isError: true}))
+        visited.onEvent(start('read', {path: 'hung.ts'}))
+        visited.onEvent(end('grep', {path: 'a.ts'}))
+
+        expect(visited.list()).toBe('')
+    })
+
     test('is empty before any read', () => {
         expect(createVisited().list()).toBe('')
     })
 
     test('caps the list at forty paths and counts the rest', () => {
         const visited = createVisited()
-        for (let i = 0; i < 43; i += 1) visited.onEvent(start('read', {path: `f${i}.ts`}))
+
+        for (let i = 0; i < 43; i += 1) {
+            visited.onEvent(start('read', {path: `f${i}.ts`}))
+            visited.onEvent(end('read', {path: `f${i}.ts`}))
+        }
 
         const list = visited.list()
         expect(list).toContain('f39.ts (lines 1-2000)')

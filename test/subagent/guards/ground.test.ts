@@ -29,7 +29,7 @@ describe('createGround', () => {
             id: 'ground',
             hint: expect.stringContaining('8 tool calls in a row that brought nothing new')
         })
-        expect((onTrip.mock.calls[0] as [{hint: string}])[0].hint).toContain('missing0.ts')
+        expect((onTrip.mock.calls[0] as [{hint: string}])[0].hint).not.toContain('missing0.ts')
     })
 
     test('repeats of earlier calls count as dead, in any mix with errors', () => {

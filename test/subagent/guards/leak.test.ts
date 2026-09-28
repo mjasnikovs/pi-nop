@@ -49,12 +49,33 @@ describe('createLeak', () => {
         guard.dispose()
     })
 
-    test('ignores clean text, failed runs and runs with no assistant message', () => {
+    test('catches markup that opens a later text block', () => {
+        const onTrip = trip()
+        const guard = createLeak(onTrip)
+        guard.onEvent(
+            agentEnd([
+                {
+                    role: 'assistant',
+                    content: [
+                        {type: 'text', text: 'Let me read it.'},
+                        {type: 'thinking', thinking: 'read'},
+                        {type: 'text', text: '<tool_call>{}</tool_call>'}
+                    ],
+                    stopReason: 'stop'
+                }
+            ])
+        )
+
+        expect(onTrip).toHaveBeenCalledTimes(1)
+    })
+
+    test('ignores clean text, cut-off or failed runs and runs with no assistant message', () => {
         const onTrip = trip()
         const guard = createLeak(onTrip)
         guard.onEvent(agentEnd([assistant('done')]))
         guard.onEvent(agentEnd([assistant('<tool_call>', 'error')]))
         guard.onEvent(agentEnd([assistant('<tool_call>', 'aborted')]))
+        guard.onEvent(agentEnd([assistant('<tool_call>', 'length')]))
         guard.onEvent(agentEnd([{role: 'user'}]))
 
         expect(onTrip).not.toHaveBeenCalled()

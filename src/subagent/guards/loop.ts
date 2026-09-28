@@ -45,7 +45,8 @@ const createLoop = (trip: Trip, visited: Visited): Guard => {
         onEvent: event => {
             if (event.type === 'tool_execution_end') {
                 const entry = window.find(other => other.id === event.toolCallId)
-                if (entry?.read !== undefined) entry.read = readEnd(entry.read, event.result)
+                if (entry?.read !== undefined)
+                    entry.read = readEnd(entry.read, event.result, event.isError)
                 return
             }
 

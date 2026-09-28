@@ -1,4 +1,4 @@
-import type {AgentSession} from '@earendil-works/pi-coding-agent'
+import type {AgentSession, AgentSessionEvent} from '@earendil-works/pi-coding-agent'
 
 import type {NopConfig} from '../../config/config'
 import {read, restarts, staleMinutes, toolCallMinutes} from '../../config/config'
@@ -28,6 +28,26 @@ const guardSettings = (nop: NopConfig): GuardSettings => ({
     toolCallMs: minutesToMs(read(nop, toolCallMinutes)),
     restarts: read(nop, restarts)
 })
+
+// A server that sends no tool call id leaves pi with ''. Pairing those starts and ends in order
+// keeps the id-keyed guards at one entry per call.
+const nameBlankIds = (): ((event: AgentSessionEvent) => AgentSessionEvent) => {
+    const open: string[] = []
+    let count = 0
+
+    return event => {
+        if (event.type === 'tool_execution_start' && event.toolCallId === '') {
+            count += 1
+            const toolCallId = `blank-${count}`
+            open.push(toolCallId)
+            return {...event, toolCallId}
+        }
+
+        if (event.type === 'tool_execution_end' && event.toolCallId === '')
+            return {...event, toolCallId: open.shift() ?? ''}
+        return event
+    }
+}
 
 // One subscription for the attempt. The first hit wins and aborts the run if it is still going.
 const watchGuards = (
@@ -59,7 +79,9 @@ const watchGuards = (
         guards.push(createToolCall(trip, settings.toolCallMs, clock))
     if (contextWindow > 0) guards.push(createChurn(trip, contextWindow))
 
-    const unsubscribe = session.subscribe(event => {
+    const named = nameBlankIds()
+    const unsubscribe = session.subscribe(raw => {
+        const event = named(raw)
         closing = event.type === 'agent_end' && !event.willRetry
         for (const guard of guards) guard.onEvent(event)
         if (closing) ended = true

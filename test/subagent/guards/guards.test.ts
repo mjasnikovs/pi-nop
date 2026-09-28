@@ -73,6 +73,19 @@ describe('watchGuards', () => {
         expect(abort).not.toHaveBeenCalled()
     })
 
+    test('calls with no id are paired in order, so a hung second call is still caught', () => {
+        const {session, emit, abort} = fakeSession()
+        const clock = fakeClock()
+        const watch = watchGuards(session, settings, 0, clock)
+        emit(start('grep', {pattern: 'a'}, ''))
+        emit(start('grep', {pattern: 'b'}, ''))
+        emit(end('grep', {pattern: 'a'}, {toolCallId: ''}))
+        clock.advance(15 * minute)
+
+        expect(abort).toHaveBeenCalledTimes(1)
+        expect(watch.hit()?.hint).toContain('grep({"pattern":"b"})')
+    })
+
     test('an agent_end that pi will retry keeps the run live for the guards', () => {
         const {session, emit, abort} = fakeSession()
         const clock = fakeClock()

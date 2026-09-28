@@ -638,6 +638,73 @@ describe('guards', () => {
         expect(createAgentSession).toHaveBeenCalledTimes(1)
     })
 
+    test('the third attempt carries the second hint only, not the first', async () => {
+        session.onPrompt = () => {
+            for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+            session.messages = [assistant({stopReason: 'aborted'})]
+
+            session.onPrompt = () => {
+                for (let i = 0; i < 8; i += 1) {
+                    session.emit({...loopCall, toolCallId: `e${i}`, args: {path: `m${i}`}})
+                    session.emit({
+                        type: 'tool_execution_end',
+                        toolCallId: `e${i}`,
+                        toolName: 'ls',
+                        result: {content: []},
+                        isError: true
+                    })
+                }
+
+                session.messages = [assistant({stopReason: 'aborted'})]
+
+                session.onPrompt = () => {
+                    session.messages = [assistant()]
+                    return Promise.resolve()
+                }
+                return Promise.resolve()
+            }
+            return Promise.resolve()
+        }
+
+        const result = await runSubagent('task', undefined, noProgress, sessionOptions)
+        expect(result.details.restarts).toBe(2)
+        const [third] = session.prompt.mock.calls[2] as [string]
+        expect(third).toStartWith('[SYSTEM NOTE: Your previous attempt made 8 tool calls')
+        expect(third).not.toContain('5 times')
+        expect(third).toEndWith('\n\ntask')
+    })
+
+    test('compaction during a tripped attempt is reported as compaction', async () => {
+        session.onPrompt = () => {
+            for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+            session.emit({type: 'compaction_start'})
+            session.messages = [assistant({stopReason: 'aborted'})]
+            return Promise.resolve()
+        }
+
+        await expect(runSubagent('task', undefined, noProgress, sessionOptions)).rejects.toThrow(
+            'Subagent context was compacted'
+        )
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+        expect(session.sessionManager.branch).not.toHaveBeenCalled()
+    })
+
+    test('dispose during a tripped attempt is reported as closed, with no rewind', async () => {
+        const handle = subagentSession(sessionOptions)
+        session.onPrompt = () => {
+            for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+            handle.dispose()
+            session.messages = [assistant({stopReason: 'aborted'})]
+            return Promise.resolve()
+        }
+
+        await expect(handle.prompt('task', undefined, noProgress)).rejects.toThrow(
+            'Subagent session was closed'
+        )
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+        expect(session.sessionManager.branch).not.toHaveBeenCalled()
+    })
+
     test('a session with no entries yet is rewound to its root', async () => {
         loopOnce()
         session.sessionManager.getLeafId.mockReturnValueOnce(null)

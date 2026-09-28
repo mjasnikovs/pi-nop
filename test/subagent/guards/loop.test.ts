@@ -45,13 +45,18 @@ describe('createLoop', () => {
 
     test('trips when a path is re-read five times without new lines', () => {
         const {onTrip, send} = loop()
-        send(start('read', {path: 'a.ts', offset: 1, limit: 100}))
-        send(start('read', {path: 'a.ts', offset: 101, limit: 100}))
-        send(start('read', {path: 'a.ts', offset: 1, limit: 50}))
-        send(start('read', {path: 'a.ts', offset: 50, limit: 50}))
-        send(start('read', {path: 'a.ts', offset: 20, limit: 100}))
-        send(start('read', {path: 'a.ts', offset: 100, limit: 100}))
-        send(start('read', {path: 'a.ts', offset: 201, limit: 100}))
+
+        const read = (offset: number, limit: number) => {
+            send(start('read', {path: 'a.ts', offset, limit}))
+            send(end('read', {path: 'a.ts', offset, limit}))
+        }
+        read(1, 100)
+        read(101, 100)
+        read(1, 50)
+        read(50, 50)
+        read(20, 100)
+        read(100, 100)
+        read(201, 100)
         expect(onTrip).not.toHaveBeenCalled()
 
         send(start('read', {path: 'a.ts', offset: 1, limit: 10}))
@@ -59,8 +64,30 @@ describe('createLoop', () => {
         const [hit] = onTrip.mock.calls[0] as [{id: string; hint: string}]
         expect(hit.hint).toContain('re-read a.ts 5 times')
         expect(hit.hint).toContain(
-            'a.ts (lines 1-100, 101-200, 1-50, 50-99, 20-119, 100-199, 201-300, 1-10)'
+            'a.ts (lines 1-100, 101-200, 1-50, 50-99, 20-119, 100-199, 201-300)'
         )
+    })
+
+    test('an errored read does not raise the high-water line for its path', () => {
+        const {onTrip, send} = loop()
+        send(start('read', {path: 'a.ts', offset: 2001}))
+        send(end('read', {path: 'a.ts', offset: 2001}, {isError: true}))
+
+        for (const offset of [1, 101, 201, 301, 401, 501]) {
+            send(start('read', {path: 'a.ts', offset, limit: 100}))
+            send(end('read', {path: 'a.ts', offset, limit: 100}))
+        }
+
+        expect(onTrip).not.toHaveBeenCalled()
+    })
+
+    test('string offsets that pi coerces still count as paging forward', () => {
+        const {onTrip, send} = loop()
+        send(start('read', {path: 'a.ts'}))
+        for (const offset of ['2001', '4001', '6001', '8001', '10001', '12001'])
+            send(start('read', {path: 'a.ts', offset}))
+
+        expect(onTrip).not.toHaveBeenCalled()
     })
 
     test('paging forward with offset only, past the read cap, is progress', () => {

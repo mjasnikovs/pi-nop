@@ -10,24 +10,36 @@ type Visited = Guard & {list: () => string}
 // MAGIC NUMBER: past a screenful of paths the tail costs prefill and is not read.
 const shownPaths = 40
 
+// pi coerces a numeric string to a number before the tool runs, but the start event carries the
+// raw arguments, and a small model sends "2001" as often as 2001.
+const asNumber = (value: unknown): number | undefined => {
+    const parsed = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+    return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : undefined
+}
+
 const readCall = (name: string, args: unknown): ReadCall | undefined => {
     if (name !== 'read' || typeof args !== 'object' || args === null) return undefined
-    const {path, offset, limit} = args as {path?: unknown; offset?: unknown; limit?: unknown}
+    const {path} = args as {path?: unknown}
+    const offset = asNumber((args as {offset?: unknown}).offset)
+    const limit = asNumber((args as {limit?: unknown}).limit)
 
     if (typeof path !== 'string') return undefined
-    const from = typeof offset === 'number' && offset >= 1 ? Math.floor(offset) : 1
+    const from = offset !== undefined && offset >= 1 ? Math.floor(offset) : 1
     // pi's read stops at its line cap, so a read with no limit reaches that far, not the end.
-    const lines = typeof limit === 'number' && limit > 0 ? Math.floor(limit) : DEFAULT_MAX_LINES
+    const lines = limit !== undefined && limit > 0 ? Math.floor(limit) : DEFAULT_MAX_LINES
     return {path, from, to: from + lines - 1}
 }
 
-// pi also cuts a read at its byte cap, so the lines it returned can fall short of those asked for.
-const readEnd = (call: ReadCall, result: unknown): ReadCall => {
+// What the read actually returned. An error or an over-long first line returns no lines, and pi
+// cuts a read at its byte cap, so the lines can fall short of those asked for.
+const readEnd = (call: ReadCall, result: unknown, isError: boolean): ReadCall | undefined => {
+    if (isError) return undefined
     const truncation = (result as {details?: {truncation?: {outputLines?: unknown}}} | undefined)
         ?.details?.truncation
     const lines = truncation?.outputLines
 
-    if (typeof lines !== 'number' || lines < 1) return call
+    if (typeof lines !== 'number') return call
+    if (lines < 1) return undefined
     return {...call, to: Math.min(call.to, call.from + lines - 1)}
 }
 
@@ -43,26 +55,20 @@ const createVisited = (): Visited => {
         spans.set(call.path, known)
     }
 
+    // A read counts once it returns. One that never came back read nothing.
     return {
         onEvent: event => {
             if (event.type === 'tool_execution_start') {
                 const call = readCall(event.toolName, event.args)
-
-                if (call === undefined) return
-                pending.set(event.toolCallId, call)
-                add(call)
+                if (call !== undefined) pending.set(event.toolCallId, call)
             }
 
             if (event.type !== 'tool_execution_end') return
             const call = pending.get(event.toolCallId)
             pending.delete(event.toolCallId)
-
-            if (call === undefined) return
-            const actual = readEnd(call, event.result)
-
-            if (actual.to === call.to) return
-            spans.get(call.path)?.delete(span(call))
-            add(actual)
+            const actual =
+                call === undefined ? undefined : readEnd(call, event.result, event.isError)
+            if (actual !== undefined) add(actual)
         },
         dispose: noop,
         list: () => {
