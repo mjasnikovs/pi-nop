@@ -110,10 +110,11 @@ const toolCallMinutes = choice({
 const restarts = choice({
     id: 'restarts',
     section: 'guards',
-    label: 'restarts after a kill',
+    label: 'restarts',
     description:
-        'How many times a killed run starts again with a hint about what went wrong. '
-        + '0 keeps the guards and fails on the first kill.',
+        'How many times a run goes again: after a kill, with a hint about what went wrong, or '
+        + 'after /plan sends a goal answer back. 0 keeps the guards, fails on the first kill '
+        + 'and sends nothing back.',
     levels: [0, 1, 2, 3],
     fallback: 2
 })

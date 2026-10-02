@@ -14,7 +14,7 @@ import {oneLine} from '../subagent/subagentTui'
 import {whileHidden} from '../tui/hidden'
 import {askTool, askToolName, handOverMessage, questionsTask, sameQuestion} from './ask'
 import type {AskHost, Decision, Question} from './ask'
-import {goalPrompt, goalTask, parseGoal} from './goal'
+import {goalPrompt, goalTask, parseGoal, sendBackGoal} from './goal'
 import {PlanPanel} from './panel'
 import type {PanelActions, PanelState} from './panel'
 
@@ -227,7 +227,8 @@ export default function (pi: ExtensionAPI) {
             const {text: reply} = await current.session.prompt(
                 task,
                 run.controller.signal,
-                onProgress(run)
+                onProgress(run),
+                sendBackGoal
             )
             const goal = parseGoal(reply)
 

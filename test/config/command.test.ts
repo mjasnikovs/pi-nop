@@ -125,7 +125,7 @@ describe('panelItems', () => {
             ['header:guards', '<GUARDS>', ''],
             ['staleMinutes', 'no model output for', '10'],
             ['toolCallMinutes', 'one tool call runs for', '15'],
-            ['restarts', 'restarts after a kill', '2']
+            ['restarts', 'restarts', '2']
         ])
         expect(items[19]?.values).toEqual(['off', '5', '10', '20', '30'])
         expect(items[20]?.values).toEqual(['off', '5', '10', '15', '30'])
@@ -134,8 +134,9 @@ describe('panelItems', () => {
             'Kill the run when the model sends nothing for this long. Includes the time a local '
                 + 'model spends reading a long prompt.',
             'Kill the run when a single read, grep, find or ls does not return in this time.',
-            'How many times a killed run starts again with a hint about what went wrong. '
-                + '0 keeps the guards and fails on the first kill.'
+            'How many times a run goes again: after a kill, with a hint about what went wrong, or '
+                + 'after /plan sends a goal answer back. 0 keeps the guards, fails on the first '
+                + 'kill and sends nothing back.'
         ])
         expect(
             panelItems({staleMinutes: 'off', toolCallMinutes: 5, restarts: 0}, models)

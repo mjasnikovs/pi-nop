@@ -11,13 +11,17 @@
 | `concurrency` | 1 to 4 | unlimited | Subagents running at once. |
 | `staleMinutes` | `off`, 5, 10, 20, 30 | 10 | Kill a run when the model sends nothing for this long. |
 | `toolCallMinutes` | `off`, 5, 10, 15, 30 | 15 | Kill a run when one read, grep, find or ls does not return in this time. |
-| `restarts` | 0 to 3 | 2 | How many times a killed run starts again. 0 keeps the guards and fails on the first kill. |
+| `restarts` | 0 to 3 | 2 | How many times a run goes again, after a kill or after `/plan` sends a goal answer back. 0 keeps the guards, fails on the first kill and sends nothing back. |
 
 ### Guards
 
 Every subagent run is watched. A guard that trips aborts the run, drops that attempt's messages,
-and prompts again with a note on what went wrong. After `restarts` kills the tool call fails with
-`Subagent killed by the guard: <name>`.
+and prompts again with a note on what went wrong. A kill past the `restarts` budget fails the tool
+call with `Subagent killed by the guard: <name>`.
+
+The goal turn of `/plan` uses the same budget. While it lasts, a finished reply with no `GOAL:` line
+is sent back to the model with a note, in the same conversation. After that the panel shows the
+error. A reply that failed or was cut off at the output limit is not sent back.
 
 - **loop**: the same tool call five times in the last twenty, or one file re-read five times
   without reaching new lines. The note names the call and lists what the attempt had read.

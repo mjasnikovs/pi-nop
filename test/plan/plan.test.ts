@@ -6,18 +6,20 @@ import type {
     Theme
 } from '@earendil-works/pi-coding-agent'
 
-import type {SubagentTask, SubagentUpdate} from '../../src/subagent/subagent'
+import type {SendBack, SubagentTask, SubagentUpdate} from '../../src/subagent/subagent'
 import {acceptRules, AskErrors, handOverMessage} from '../../src/plan/ask'
-import {goalPrompt} from '../../src/plan/goal'
+import {goalPrompt, sendBackGoal} from '../../src/plan/goal'
 
 type Reply = {content: {text: string}[]}
 type Tool = {execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<Reply>}
 type SessionOptions = {prompt: string; customTools: Tool[]; waitingTools: string[]}
 
-const prompt = mock((_task: SubagentTask, _signal: unknown, onUpdate: SubagentUpdate) => {
-    onUpdate?.({type: 'turn', text: 'reading', details: {} as never})
-    return Promise.resolve({text: 'GOAL: Fix the typo.', details: {} as never})
-})
+const prompt = mock(
+    (_task: SubagentTask, _signal: unknown, onUpdate: SubagentUpdate, _sendBack?: SendBack) => {
+        onUpdate?.({type: 'turn', text: 'reading', details: {} as never})
+        return Promise.resolve({text: 'GOAL: Fix the typo.', details: {} as never})
+    }
+)
 const dispose = mock(() => undefined)
 const subagentSession = mock((_options: SessionOptions) => ({prompt, dispose}))
 const configuredOptions = mock(() => ({cwd: '/repo', prompt: '', tools: []}))
@@ -415,6 +417,17 @@ describe('/plan', () => {
 
         expect(appendEntry).toHaveBeenCalledTimes(1)
         expect(lastEntry()).toMatchObject({goal: 'Fix the typo.'})
+    })
+
+    test('the goal turn hands the subagent its GOAL check, the questions turn hands none', async () => {
+        await openWithGoal()
+        expect(prompt.mock.calls.at(-1)?.[3]).toBe(sendBackGoal)
+
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(prompt).toHaveBeenCalledTimes(2)
+        expect(prompt.mock.calls.at(-1)?.[3]).toBeUndefined()
     })
 
     test('no GOAL line shows an error and keeps the old state', async () => {

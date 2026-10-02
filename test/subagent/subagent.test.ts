@@ -6,6 +6,7 @@ import {rmSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
 import type {SubagentDetails, SubagentOptions, SubagentUpdate} from '../../src/subagent/subagent'
+import type {SubagentProgress} from '../../src/subagent/progress'
 
 type FakeMessage = Pick<
     AssistantMessage,
@@ -856,6 +857,194 @@ describe('guards', () => {
         const result = await runSubagent('task', undefined, noProgress, sessionOptions)
         expect(result.details.restarts).toBe(1)
         expect((session.prompt.mock.calls[1] as [string])[0]).toContain('context window')
+    })
+})
+
+describe('send back', () => {
+    const note = '[NOTE]'
+    const wantsGoal = mock((answer: string) => (answer.startsWith('GOAL:') ? undefined : note))
+    const says = (text: string) => assistant({content: [{type: 'text', text}]})
+    const thinksOnly = () => assistant({content: [{type: 'thinking', thinking: 'hm'}]})
+    const loopCall = {type: 'tool_execution_start', toolCallId: 'c', toolName: 'ls', args: {}}
+
+    // Each prompt ends on the next step and moves the leaf. A function step ends as a kill.
+    const answers = (...steps: Array<FakeMessage | (() => void)>) => {
+        const {getLeafId, branch} = session.sessionManager
+        let leaves = 1
+        branch.mockImplementation((leaf: string) => getLeafId.mockReturnValue(leaf))
+
+        session.onPrompt = () => {
+            const step = steps.shift()
+            if (step === undefined) throw new Error('no answer left')
+            if (typeof step === 'function') step()
+            session.messages = [
+                typeof step === 'function' ? assistant({stopReason: 'aborted'}) : step
+            ]
+            session.agent.state.messages.push({role: 'assistant'})
+            leaves += 1
+            getLeafId.mockReturnValue(`leaf-${leaves}`)
+            return Promise.resolve()
+        }
+    }
+
+    const loops = () => {
+        for (let i = 0; i < 5; i += 1) session.emit(loopCall)
+    }
+
+    const run = (onUpdate: SubagentUpdate = noProgress) =>
+        subagentSession(sessionOptions).prompt('task', undefined, onUpdate, wantsGoal)
+    beforeEach(() => {
+        wantsGoal.mockClear()
+    })
+
+    test('a rejected answer gets the note alone, with the conversation kept', async () => {
+        answers(says('a list'), says('GOAL: x'))
+        const updates: SubagentProgress[] = []
+        const result = await run(update => updates.push(update))
+        expect(result.text).toBe('GOAL: x')
+        expect(result.details.restarts).toBe(1)
+        expect(result.details.task).toBe('task')
+        expect(session.prompt.mock.calls.map(call => call[0])).toEqual(['task', note])
+        expect(wantsGoal.mock.calls).toEqual([['a list'], ['GOAL: x']])
+        expect(session.sessionManager.branch).not.toHaveBeenCalled()
+        expect(session.agent.state.messages).toHaveLength(3)
+        expect(updates.map(update => update.type)).toEqual([
+            'started',
+            'turn',
+            'restarting',
+            'turn'
+        ])
+        expect(updates[2]).toEqual({type: 'restarting', guard: 'answer'})
+        expect(
+            updates.flatMap(update => (update.type === 'turn' ? [update.details.task] : []))
+        ).toEqual(['task', 'task'])
+    })
+
+    test('an accepted answer is not sent back', async () => {
+        answers(says('GOAL: x'))
+
+        expect((await run()).details.restarts).toBe(0)
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+    })
+
+    test('the answer is judged as the text the caller gets', async () => {
+        const split = assistant({
+            content: [
+                {type: 'text', text: '\n Here it is.'},
+                {type: 'text', text: 'GOAL: x \n'}
+            ]
+        })
+        answers(split)
+        const judged = mock((_answer: string) => undefined)
+        const result = await subagentSession(sessionOptions).prompt(
+            'task',
+            undefined,
+            noProgress,
+            judged
+        )
+        expect(judged.mock.calls).toEqual([[result.text]])
+    })
+
+    test('an empty answer is sent back too', async () => {
+        answers(thinksOnly(), says('GOAL: x'))
+
+        expect((await run()).text).toBe('GOAL: x')
+        expect(wantsGoal.mock.calls[0]).toEqual([''])
+    })
+
+    test('once the restarts are spent the last answer comes back as it is', async () => {
+        saveConfig({restarts: 1})
+        answers(says('one'), says('two'), says('three'))
+
+        expect((await run()).text).toBe('two')
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+        expect(wantsGoal).toHaveBeenCalledTimes(1)
+    })
+
+    test('an empty last answer still fails', async () => {
+        saveConfig({restarts: 1})
+        answers(thinksOnly(), thinksOnly())
+
+        await expect(run()).rejects.toThrow('Empty model output (stop; blocks: thinking)')
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+    })
+
+    test('a kill past the budget fails the run, note pending or not', async () => {
+        saveConfig({restarts: 1})
+        answers(says('a list'), loops)
+
+        await expect(run()).rejects.toThrow('Subagent killed by the guard: loop')
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+    })
+
+    test('a kill uses up the budget for a send back too', async () => {
+        saveConfig({restarts: 1})
+        answers(loops, says('a list'))
+
+        expect((await run()).text).toBe('a list')
+        expect(session.prompt).toHaveBeenCalledTimes(2)
+    })
+
+    test('a kill of a finished answer wins over the send back', async () => {
+        answers(says('<tool_call>\n<function=ls>\n<parameter=path>'), says('GOAL: x'))
+        const answer = session.onPrompt
+        session.onPrompt = async () => {
+            await answer()
+            session.emit({type: 'agent_end', messages: session.messages, willRetry: false})
+        }
+
+        await run()
+
+        const sent = session.prompt.mock.calls.map(call => call[0] as string)
+        expect(sent[1]).toStartWith('[SYSTEM NOTE: Your previous attempt wrote a tool call')
+        expect(sent[1]).toEndWith('\n\ntask')
+        expect(wantsGoal.mock.calls).toEqual([['GOAL: x']])
+    })
+
+    test('with restarts at 0 nothing is sent back', async () => {
+        saveConfig({restarts: 0})
+        answers(says('a list'))
+
+        expect((await run()).text).toBe('a list')
+        expect(session.prompt).toHaveBeenCalledTimes(1)
+        expect(wantsGoal).not.toHaveBeenCalled()
+    })
+
+    test('a cut-off answer is reported, not sent back', async () => {
+        answers(assistant({stopReason: 'length'}))
+
+        await expect(run()).rejects.toThrow('Subagent output cut off')
+        expect(wantsGoal).not.toHaveBeenCalled()
+    })
+
+    test('a kill after a sent back answer drops its own attempt and sends the note again', async () => {
+        answers(says('a list'), loops, says('GOAL: x'))
+        const result = await run()
+        expect(result.details.restarts).toBe(2)
+        const sent = session.prompt.mock.calls.map(call => call[0] as string)
+        expect(sent.slice(0, 2)).toEqual(['task', note])
+        expect(sent[2]).toStartWith('[SYSTEM NOTE: Your previous attempt called ls(')
+        expect(sent[2]).toEndWith(`\n\n${note}`)
+        expect(session.sessionManager.branch.mock.calls).toEqual([['leaf-2']])
+        expect(session.agent.state.messages).toHaveLength(3)
+    })
+
+    test('an answer rejected after a kill gets the note alone', async () => {
+        answers(loops, says('a list'), says('GOAL: x'))
+        await run()
+
+        const sent = session.prompt.mock.calls.map(call => call[0] as string)
+        expect(sent[1]).toEndWith('\n\ntask')
+        expect(sent[2]).toBe(note)
+        expect(session.sessionManager.branch.mock.calls).toEqual([['leaf-1']])
+        expect(session.agent.state.messages).toHaveLength(3)
+    })
+
+    test('a failed run is reported, not sent back', async () => {
+        answers(assistant({stopReason: 'error', errorMessage: 'boom'}))
+
+        await expect(run()).rejects.toThrow('Subagent run failed: boom')
+        expect(wantsGoal).not.toHaveBeenCalled()
     })
 })
 

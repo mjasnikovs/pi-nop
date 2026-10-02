@@ -353,6 +353,40 @@ turns. A softer line, "read a file only when the change needs something you have
 named `shout` 2/2, `cli` 0/2 and looped once. Prompt A stays. Open: a wording that rereads only
 when the change needs it, measured on both scenarios.
 
+Send back, 2026-10-02. A reply with no `GOAL:` line, or with only a thinking block, used to be
+dropped and shown as an error. Now it goes back to the model. Gemma 4 12B on this repo, request
+"any misisng test" and then the same text as a change, 30 sessions per arm, two turns each:
+
+| Claim | No retry | Note in the same conversation | Rewind, hint plus task |
+|---|---|---|---|
+| Turns that ended with a parsed `GOAL:` | 43/57 | 60/60 | 59/60 |
+| First replies rejected | 14 | 13 | 16 |
+| Rejected replies that were thinking only | 3 | 3 | 3 |
+| Notes or restarts sent | 0 | 14 | 19 |
+| Sessions that spent the budget | - | 0 | 1 |
+| Total time | 1019 s | 946 s | 1326 s |
+
+With no retry a thinking-only first reply fails the session, so 3 second turns never ran.
+
+No retry against the note: Fisher p < 0.0001. The note against the rewind: no difference in
+goals, the note is cheaper, so it shipped. The note is `noGoalNote` in `src/plan/goal.ts`. It
+shares the `restarts` budget with the guards.
+
+pi-ai leaves a thinking-only assistant message out of the next request, so the server gets two
+user messages in a row. Gemma recovered 3/3. Qwen 3.8 answered a hand-built request of that
+shape with a `GOAL:` line, 1/1.
+
+Shipped code, same two turns: Gemma, 15 sessions, 29/30 turns parsed, 7 replies sent back and
+7/7 recovered. The one lost turn was two loop kills and a ground kill, no send back in it.
+Qwen 3.8, 10 sessions: 20/20 turns parsed, nothing sent back, so the note itself is
+unmeasured there.
+
+Not measured: a guard kill in the attempt that answers a note. The restart then sends the guard
+hint and the note.
+
+Reviewed in four rounds by a second model. No round found a bug in the loop. Each test gap it
+named is now a test that fails when the line is broken.
+
 ## 10. Questions step in the panel, measured
 
 Built 2026-10-02 on pi 1.0.0. Accept starts one questions run in the same subagent session. An

@@ -71,11 +71,15 @@ type SubagentResult = {
     details: SubagentDetails
 }
 
+/** The note sent back for an answer the caller cannot use. Undefined accepts the answer. */
+type SendBack = (answer: string) => string | undefined
+
 type SubagentSession = {
     prompt: (
         task: SubagentTask,
         signal: AbortSignal | undefined,
-        onUpdate: SubagentUpdate
+        onUpdate: SubagentUpdate,
+        sendBack?: SendBack
     ) => Promise<SubagentResult>
     dispose: () => void
 }
@@ -85,6 +89,7 @@ const unlessAborted = (signal: AbortSignal | undefined, error: unknown): void =>
     if (signal?.aborted) throw new Error(SubagentErrors.Aborted, {cause: error})
 }
 
+const sentBack = 'answer'
 const turnText = (message: AssistantMessage): string => contentText(message.content, '').trim()
 
 const buildDetails = (
@@ -238,6 +243,10 @@ const runAttempt = async (
     }
 }
 
+// A failed or cut-off run is reported as that, not sent back.
+const rejection = (last: AssistantMessage, sendBack: SendBack | undefined): string | undefined =>
+    last.stopReason === 'stop' ? sendBack?.(turnText(last)) : undefined
+
 const answerText = (last: AssistantMessage): string => {
     const {stopReason, errorMessage} = last
 
@@ -283,7 +292,8 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         task: SubagentTask,
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate,
-        settings: GuardSettings
+        settings: GuardSettings,
+        sendBack: SendBack | undefined
     ): Promise<SubagentResult> => {
         const startedAt = performance.now()
 
@@ -302,6 +312,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
 
         try {
             let hint: string | undefined
+            let note: string | undefined
 
             for (let restarts = 0; ; restarts += 1) {
                 if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
@@ -309,7 +320,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
                 const text = typeof task === 'string' ? task : task()
                 const {watch, hit, rewind} = await runAttempt(
                     current,
-                    hint === undefined ? text : [hint, text].join('\n\n'),
+                    [hint, note ?? text].filter(part => part !== undefined).join('\n\n'),
                     text,
                     startedAt,
                     restarts,
@@ -328,6 +339,17 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
 
                 if (hit === undefined) {
                     if (watch.last === undefined) throw new Error(SubagentErrors.EmptyOutput)
+
+                    const sent =
+                        restarts < settings.restarts ? rejection(watch.last, sendBack) : undefined
+
+                    // The rejected answer stays in the conversation, so the note goes alone.
+                    if (sent !== undefined) {
+                        note = sent
+                        hint = undefined
+                        onUpdate?.({type: 'restarting', guard: sentBack})
+                        continue
+                    }
 
                     const answer = answerText(watch.last)
                     return {
@@ -357,7 +379,8 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
     const prompt = (
         task: SubagentTask,
         signal: AbortSignal | undefined,
-        onUpdate: SubagentUpdate
+        onUpdate: SubagentUpdate,
+        sendBack?: SendBack
     ): Promise<SubagentResult> => {
         // Read on every prompt, so a session kept open still follows the current settings.
         const nop = safeConfig()
@@ -365,10 +388,13 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         slots.setCap(cap === unlimited ? Number.POSITIVE_INFINITY : cap)
         return slots.run(
             () =>
-                turn(task, signal, onUpdate, {
-                    ...guardSettings(nop),
-                    waits: new Set(options.waitingTools)
-                }),
+                turn(
+                    task,
+                    signal,
+                    onUpdate,
+                    {...guardSettings(nop), waits: new Set(options.waitingTools)},
+                    sendBack
+                ),
             () => onUpdate?.({type: 'queued'})
         )
     }
@@ -480,6 +506,7 @@ export {
     unlessAborted
 }
 export type {
+    SendBack,
     SubagentDetails,
     SubagentOptions,
     SubagentSession,

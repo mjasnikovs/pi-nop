@@ -1,9 +1,13 @@
 const goalLabel = 'GOAL:'
+const goalLayout = `${goalLabel} <one sentence, what changes for the user>`
 
 const goalPrompt = `You turn a request into one goal sentence for a coding task.
 Read a file only when the request names something you must check.
 Answer with one line and nothing else:
-${goalLabel} <one sentence, what changes for the user>`
+${goalLayout}`
+
+const noGoalNote = `[SYSTEM NOTE: Your reply had no GOAL line, so it was not accepted. Answer again with one line and nothing else:
+${goalLayout}]`
 
 type GoalTask = {
     request?: string
@@ -31,5 +35,8 @@ const parseGoal = (text: string): string | undefined => {
     return goal === undefined || goal === '' ? undefined : goal
 }
 
-export {goalPrompt, goalTask, parseGoal}
+const sendBackGoal = (reply: string): string | undefined =>
+    parseGoal(reply) === undefined ? noGoalNote : undefined
+
+export {goalPrompt, goalTask, noGoalNote, parseGoal, sendBackGoal}
 export type {GoalTask}
