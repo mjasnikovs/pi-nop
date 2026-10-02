@@ -16,6 +16,7 @@ type GuardSettings = {
     staleMs: number | undefined
     toolCallMs: number | undefined
     restarts: number
+    waits?: ReadonlySet<string>
 }
 
 type GuardWatch = {hit: () => GuardHit | undefined; stop: () => void}
@@ -29,23 +30,25 @@ const guardSettings = (nop: NopConfig): GuardSettings => ({
     restarts: read(nop, restarts)
 })
 
-// A server that sends no tool call id leaves pi with ''. Pairing those starts and ends in order
-// keeps the id-keyed guards at one entry per call.
+// A server that sends no tool call id leaves pi with ''. Pairing each end with the oldest open
+// start of its tool keeps one entry per call. Two calls of one tool can still swap.
 const nameBlankIds = (): ((event: AgentSessionEvent) => AgentSessionEvent) => {
-    const open: string[] = []
+    const open: {toolCallId: string; toolName: string}[] = []
     let count = 0
 
     return event => {
         if (event.type === 'tool_execution_start' && event.toolCallId === '') {
             count += 1
             const toolCallId = `blank-${count}`
-            open.push(toolCallId)
+            open.push({toolCallId, toolName: event.toolName})
             return {...event, toolCallId}
         }
 
-        if (event.type === 'tool_execution_end' && event.toolCallId === '')
-            return {...event, toolCallId: open.shift() ?? ''}
-        return event
+        if (event.type !== 'tool_execution_end' || event.toolCallId !== '') return event
+
+        const at = open.findIndex(call => call.toolName === event.toolName)
+        const [started] = at === -1 ? [] : open.splice(at, 1)
+        return {...event, toolCallId: started?.toolCallId ?? ''}
     }
 }
 
@@ -71,12 +74,12 @@ const watchGuards = (
     const guards: Guard[] = [
         visited,
         createLoop(trip, visited),
-        createGround(trip, visited),
+        createGround(trip, visited, settings.waits),
         createLeak(trip)
     ]
     if (settings.staleMs !== undefined) guards.push(createStale(trip, settings.staleMs, clock))
     if (settings.toolCallMs !== undefined)
-        guards.push(createToolCall(trip, settings.toolCallMs, clock))
+        guards.push(createToolCall(trip, settings.toolCallMs, clock, settings.waits))
     if (contextWindow > 0) guards.push(createChurn(trip, contextWindow))
 
     const named = nameBlankIds()

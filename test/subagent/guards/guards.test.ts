@@ -86,6 +86,56 @@ describe('watchGuards', () => {
         expect(watch.hit()?.hint).toContain('grep({"pattern":"b"})')
     })
 
+    test('calls with no id are paired by tool, so a read that ends first frees its own timer', () => {
+        const {session, emit} = fakeSession()
+        const clock = fakeClock()
+        const waits = new Set(['ask_user'])
+        const watch = watchGuards(session, {...settings, staleMs: undefined, waits}, 0, clock)
+        emit(start('ask_user', {question: 'which?'}, ''))
+        emit(start('read', {path: 'a'}, ''))
+        emit(end('read', {path: 'a'}, {toolCallId: ''}))
+        clock.advance(60 * minute)
+
+        expect(watch.hit()).toBeUndefined()
+        expect(clock.pending()).toBe(0)
+    })
+
+    test('a call with an id keeps it', () => {
+        const {session, emit} = fakeSession()
+        const clock = fakeClock()
+        const watch = watchGuards(session, {...settings, staleMs: undefined}, 0, clock)
+        emit(start('read', {path: 'a'}, ''))
+        emit(start('read', {path: 'b'}, 'call-1'))
+        emit(end('read', {path: 'b'}, {toolCallId: 'call-1'}))
+        expect(clock.pending()).toBe(1)
+
+        emit(end('read', {path: 'a'}, {toolCallId: ''}))
+        expect(clock.pending()).toBe(0)
+        expect(watch.hit()).toBeUndefined()
+    })
+
+    test('two calls of one tool with no id each free their own timer', () => {
+        const {session, emit} = fakeSession()
+        const clock = fakeClock()
+        const watch = watchGuards(session, {...settings, staleMs: undefined}, 0, clock)
+        emit(start('read', {path: 'a'}, ''))
+        emit(start('read', {path: 'b'}, ''))
+        emit(end('read', {path: 'a'}, {toolCallId: ''}))
+        emit(end('read', {path: 'b'}, {toolCallId: ''}))
+
+        expect(clock.pending()).toBe(0)
+        expect(watch.hit()).toBeUndefined()
+    })
+
+    test('an end with no id and no open start of its tool passes through', () => {
+        const {session, emit} = fakeSession()
+        const watch = watchGuards(session, settings, 0, fakeClock())
+        emit(start('read', {path: 'a'}, ''))
+        emit(end('grep', {pattern: 'a'}, {toolCallId: ''}))
+
+        expect(watch.hit()).toBeUndefined()
+    })
+
     test('an agent_end that pi will retry keeps the run live for the guards', () => {
         const {session, emit, abort} = fakeSession()
         const clock = fakeClock()
@@ -104,6 +154,31 @@ describe('watchGuards', () => {
         const watch = watchGuards(session, settings, 0, clock)
         emit({type: 'agent_end', messages: []} as unknown as AgentSessionEvent)
         clock.advance(60 * minute)
+
+        expect(watch.hit()).toBeUndefined()
+        expect(abort).not.toHaveBeenCalled()
+    })
+
+    test('a waiting tool from the settings never trips the tool-call guard', () => {
+        const {session, emit, abort} = fakeSession()
+        const clock = fakeClock()
+        const waits = new Set(['ask_user'])
+        const watch = watchGuards(session, {...settings, staleMs: undefined, waits}, 0, clock)
+        emit(start('ask_user', {question: 'which?'}, 'call-1'))
+        clock.advance(60 * minute)
+
+        expect(watch.hit()).toBeUndefined()
+        expect(abort).not.toHaveBeenCalled()
+    })
+
+    test('the ground guard gets the waiting tools from the settings', () => {
+        const {session, emit, abort} = fakeSession()
+        const waits = new Set(['ask_user'])
+        const watch = watchGuards(session, {...settings, waits}, 0, fakeClock())
+        const asks = Array.from({length: 10}, (_, index) => ({question: `q${String(index)}`}))
+
+        for (const args of asks) emit(start('ask_user', args))
+        for (const args of asks.slice(1)) emit(end('ask_user', args, {isError: true}))
 
         expect(watch.hit()).toBeUndefined()
         expect(abort).not.toHaveBeenCalled()

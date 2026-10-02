@@ -6,7 +6,13 @@ const toolCallHint = (name: string, args: unknown, ms: number): string =>
     + `returned after ${minutes(ms)}, so the attempt was stopped and its conversation discarded. `
     + 'Do not repeat that call. Narrow it, or work from what you already have.]'
 
-const createToolCall = (trip: Trip, ms: number, clock: Clock): Guard => {
+// A tool in waits is held open by the user, not by a stuck call, so it gets no timer.
+const createToolCall = (
+    trip: Trip,
+    ms: number,
+    clock: Clock,
+    waits: ReadonlySet<string> = new Set()
+): Guard => {
     const timers = new Map<string, Timer>()
 
     const clear = (id: string): void => {
@@ -17,7 +23,7 @@ const createToolCall = (trip: Trip, ms: number, clock: Clock): Guard => {
 
     return {
         onEvent: event => {
-            if (event.type === 'tool_execution_start') {
+            if (event.type === 'tool_execution_start' && !waits.has(event.toolName)) {
                 const {toolCallId, toolName, args} = event
                 clear(toolCallId)
                 timers.set(

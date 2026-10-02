@@ -1,5 +1,10 @@
 import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
-import type {ExtensionAPI, ExtensionContext, ToolDefinition} from '@earendil-works/pi-coding-agent'
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+    ExtensionToolContext,
+    ToolDefinition
+} from '@earendil-works/pi-coding-agent'
 import type {Api, Model} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
 import type {SubagentOptions, SubagentUpdate} from '../../../src/subagent/subagent'
@@ -47,7 +52,7 @@ const {taskShare} = await import('../../../src/subagent/budget')
 const {buildTask, pagePrompt, default: register} = await import('../../../src/subagent/fetch/fetch')
 const registerTool = mock((_tool: FetchTool) => undefined)
 const pi = {registerTool} as unknown as ExtensionAPI
-const ctx = {cwd: '/cwd'} as unknown as ExtensionContext
+const ctx = {cwd: '/cwd'} as unknown as ExtensionToolContext
 const onUpdate = mock((_update: unknown) => undefined)
 const params = {url: 'https://example.com', query: 'what'}
 

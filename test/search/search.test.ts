@@ -1,5 +1,10 @@
 import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
-import type {ExtensionAPI, ExtensionContext, ToolDefinition} from '@earendil-works/pi-coding-agent'
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+    ExtensionToolContext,
+    ToolDefinition
+} from '@earendil-works/pi-coding-agent'
 import type {TObject, TString} from 'typebox'
 import type {NopConfig} from '../../src/config/config'
 
@@ -29,7 +34,7 @@ const realFetch = globalThis.fetch
 const fetchMock = mock((_url: string, _init?: RequestInit) => Promise.resolve(json(results)))
 const registerTool = mock((_tool: SearchTool) => undefined)
 const pi = {registerTool} as unknown as ExtensionAPI
-const ctx = {cwd: '/cwd'} as unknown as ExtensionContext
+const ctx = {cwd: '/cwd'} as unknown as ExtensionToolContext
 
 const tool = (): SearchTool => {
     register(pi)

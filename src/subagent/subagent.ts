@@ -2,7 +2,8 @@ import type {
     AgentSession,
     ExtensionAPI,
     ExtensionContext,
-    SessionStats
+    SessionStats,
+    ToolDefinition
 } from '@earendil-works/pi-coding-agent'
 import {
     createAgentSession,
@@ -58,7 +59,12 @@ type SubagentOptions = {
     tools: SubagentTools[]
     thinkingLevel?: ThinkingLevel
     model?: Model<Api>
+    customTools?: ToolDefinition[]
+    waitingTools?: string[]
 }
+
+// A function is read again on every attempt, so a restart can carry what the run learned.
+type SubagentTask = string | (() => string)
 
 type SubagentResult = {
     text: string
@@ -67,7 +73,7 @@ type SubagentResult = {
 
 type SubagentSession = {
     prompt: (
-        task: string,
+        task: SubagentTask,
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate
     ) => Promise<SubagentResult>
@@ -118,6 +124,7 @@ const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOption
 }
 
 const buildSession = async (options: SubagentOptions): Promise<AgentSession> => {
+    const customTools = options.customTools ?? []
     const settingsManager = SettingsManager.create(options.cwd, getAgentDir())
 
     const loader = new DefaultResourceLoader({
@@ -141,7 +148,9 @@ const buildSession = async (options: SubagentOptions): Promise<AgentSession> => 
         sessionManager: SessionManager.inMemory(options.cwd),
         settingsManager,
         resourceLoader: loader,
-        tools: options.tools,
+        // pi drops a custom tool whose name is not on the allowlist.
+        tools: [...options.tools, ...customTools.map(tool => tool.name)],
+        customTools,
         thinkingLevel: options.thinkingLevel,
         model: options.model
     })
@@ -271,7 +280,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
     }
 
     const turn = async (
-        task: string,
+        task: SubagentTask,
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate,
         settings: GuardSettings
@@ -292,15 +301,16 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         signal?.addEventListener('abort', onAbort, {once: true})
 
         try {
-            let text = task
+            let hint: string | undefined
 
             for (let restarts = 0; ; restarts += 1) {
                 if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
+                const text = typeof task === 'string' ? task : task()
                 const {watch, hit, rewind} = await runAttempt(
                     current,
+                    hint === undefined ? text : [hint, text].join('\n\n'),
                     text,
-                    task,
                     startedAt,
                     restarts,
                     onUpdate,
@@ -324,7 +334,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
                         text: answer,
                         details: buildDetails(
                             current.getSessionStats(),
-                            task,
+                            text,
                             watch.last,
                             answer,
                             startedAt,
@@ -337,7 +347,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
 
                 rewind()
                 onUpdate?.({type: 'restarting', guard: hit.id})
-                text = [hit.hint, task].join('\n\n')
+                hint = hit.hint
             }
         } finally {
             signal?.removeEventListener('abort', onAbort)
@@ -345,7 +355,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
     }
 
     const prompt = (
-        task: string,
+        task: SubagentTask,
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate
     ): Promise<SubagentResult> => {
@@ -354,7 +364,11 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         const cap = read(nop, concurrency)
         slots.setCap(cap === unlimited ? Number.POSITIVE_INFINITY : cap)
         return slots.run(
-            () => turn(task, signal, onUpdate, guardSettings(nop)),
+            () =>
+                turn(task, signal, onUpdate, {
+                    ...guardSettings(nop),
+                    waits: new Set(options.waitingTools)
+                }),
             () => onUpdate?.({type: 'queued'})
         )
     }
@@ -465,4 +479,11 @@ export {
     subagentSession,
     unlessAborted
 }
-export type {SubagentDetails, SubagentOptions, SubagentSession, SubagentToolSpec, SubagentUpdate}
+export type {
+    SubagentDetails,
+    SubagentOptions,
+    SubagentSession,
+    SubagentTask,
+    SubagentToolSpec,
+    SubagentUpdate
+}

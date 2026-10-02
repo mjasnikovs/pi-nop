@@ -1,6 +1,6 @@
 import {describe, expect, mock, test} from 'bun:test'
 
-import {boxed} from '../../src/config/box'
+import {boxed, frameRows} from '../../src/config/box'
 
 const wrap = (text: string) => `<${text}>`
 const child = {
@@ -9,6 +9,16 @@ const child = {
     handleInput: mock((_data: string) => undefined)
 }
 describe('boxed', () => {
+    test('frameRows is what the box adds around its child', () => {
+        const rows = (count: number) => ({
+            render: () => Array.from({length: count}, () => 'x'),
+            invalidate: () => undefined,
+            handleInput: () => undefined
+        })
+        expect(boxed(rows(0), 't', String, String).render(8).length).toBe(frameRows)
+        expect(boxed(rows(5), 't', String, String).render(8).length).toBe(5 + frameRows)
+    })
+
     test('frames the child at the inner width with the title in the top edge', () => {
         const lines = boxed(child, 'pi-nop', wrap, str => `[${str}]`).render(20)
         expect(child.render).toHaveBeenCalledWith(16)

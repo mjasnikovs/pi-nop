@@ -106,12 +106,13 @@ describe('subagent tui', () => {
     describe('toolProgress turns runner events into pi partial results', () => {
         test('a turn carries its text and details', () => {
             const seen: unknown[] = []
+            const sent = details()
             toolProgress(update => seen.push(update))?.({
                 type: 'turn',
                 text: 'looking',
-                details: details()
+                details: sent
             })
-            expect(seen).toEqual([{content: [{type: 'text', text: 'looking'}], details: details()}])
+            expect(seen).toEqual([{content: [{type: 'text', text: 'looking'}], details: sent}])
         })
 
         test('the other events carry only a label', () => {

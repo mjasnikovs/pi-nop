@@ -5,7 +5,7 @@ import prettierConfig from 'eslint-config-prettier/flat'
 import stylistic from '@stylistic/eslint-plugin'
 
 export default tseslint.config(
-    {ignores: ['dist', 'node_modules', '.claude', 'test/**/__fixtures__/**']},
+    {ignores: ['dist', 'node_modules', '.claude', 'harness', 'test/**/__fixtures__/**']},
     {
         extends: [js.configs.recommended, ...tseslint.configs.recommended],
         files: ['**/*.ts'],

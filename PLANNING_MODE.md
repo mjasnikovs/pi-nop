@@ -352,3 +352,105 @@ was not shipped. A named `shout` 2/2 and `cli` 1/2, at 12 to 35 s per change, 11
 turns. A softer line, "read a file only when the change needs something you have not seen yet",
 named `shout` 2/2, `cli` 0/2 and looped once. Prompt A stays. Open: a wording that rereads only
 when the change needs it, measured on both scenarios.
+
+## 10. Questions step in the panel, measured
+
+Built 2026-10-02 on pi 1.0.0. Accept starts one questions run in the same subagent session. An
+`ask_user` tool (`src/plan/ask.ts`) shows one question in the panel and waits. Options are rows,
+typed text is a free answer, and the tool result is `Answer: <text>`. Each answer is saved
+before the tool returns. The tool is in the session from its first turn, and the system prompt
+never changes, because either change empties the cache on a local model.
+
+Code refuses a call in the Goal turn, a blank question, fewer than two distinct options, a quote
+that is not one whole line of the named file, and a second question while one is on screen. The
+quoted file is found through pi's own read tool, so a path resolves as the model's read did. It
+may be outside cwd, and only a regular file is read. A question asked again gets its saved
+answer. The run's last text is ignored. Finish and Change goal close the session. A failed run
+or a reopened panel offers "Ask questions", which starts a fresh session with request, goal and
+answers as text.
+
+Guards and the waiting tool: the tool-call guard gives `ask_user` no timer. The ground guard
+judges calls that end while a question is in flight only when the last question ends, so a dead
+call cannot stop a question the user is reading. A refused question is not a "seen" call, since
+the model is told to ask it again. A saved answer given again is flagged by the tool and counts
+as dead. A question stopped by a guard leaves the screen, and text typed for it is dropped.
+
+pi cuts an overlay from the bottom (`slice(0, maxHeight)`) and never tells the component its
+height, so a tall question lost its rows and input. The panel now has no `maxHeight`, reads
+`tui.terminal.rows`, and shrinks its body in steps until it fits: answers become a count, the
+goal becomes one line, the full option text shows only for the highlighted row. If nothing
+fits, room goes in this order: input, hints and a scrolling menu, the question text, the rest of
+the menu, the quote, the heading, the picked option, the context. A long error is cut to fit.
+Seen on the real screen at 46, 30 and 20 rows, in fullscreen and regular mode. pi's ScrollView
+does not clip inside an overlay: its clipping is `renderLayoutFrame`, root only, not exported.
+
+Harness: `harness/questions-*`, runs in `harness/runs/questions/`. All through the real pi
+(`pi -p -e <probe> "/probe"`), so the numbers are for the runtime packages.
+
+Cache, append-only:
+
+| Check | Qwen 3.8 27B | Gemma 4 12B |
+|---|---|---|
+| Request k is a byte prefix of request k+1, tool list equal (recording proxy) | 290/290 | 671/671 |
+| Server cache covers the previous prompt but its last 5 tokens | 290/290 | 671/671 |
+| Same rule from pi's usage numbers, real repo, prompts up to 40k tokens | 130/130 | 156/156 |
+| Abort while the tool waits, then prompt the same session again | 3/3 | 5/5 |
+| Tool that ignores the abort signal: the run never settles | not run | 2/2 |
+
+A re-rendered assistant tool call is the only thing the server recomputes. File reads never
+are. A guard restart rewinds the run by design, so the prefix changes there.
+
+Prompt wording, Gemma, 30 sessions per scenario, 4 scenarios (vague request, clear typo, an
+answer that points at other code, a new command), repo guards on. Failed = loop guard hit or a
+runaway past the probe cap.
+
+| Variant | Failed | Goal parsed | Asked on the vague request |
+|---|---|---|---|
+| A: goal prompt as is, question rules in the accept message | 15/120 | 117/120 | 9/30 |
+| B: one combined system prompt | 26/120 | 111/120 | 26/30 |
+| C: B + "You are planning, not implementing. Do not change any file." | 20/120 | 111/120 | 28/30 |
+| D: A + that same line in the accept message | 2/120 | 118/120 | 14/30 |
+
+D shipped. D on Qwen: 0/40 failed, goal parsed 40/40. Without the planning line Gemma drifts
+into implementing after an answer and loops on reads, or thinks "I need to actually perform the
+change" until the output limit. Thinking off on Gemma is worse (B: asks 12/30, loops 39/90).
+
+Behaviour with D:
+
+| Check | Qwen | Gemma |
+|---|---|---|
+| Two `ask_user` calls in one assistant message | 0/50 | 0/130 |
+| A file read happened before the first question | 24/24 | 39/39 |
+| Quoted line verifies or is NONE, fixture | 15/15 | 37/37 |
+| Quoted line verifies, real repo | 32/39 | 8/8 |
+| After a rejected question the model asks again (forced; Gemma run was variant B) | 4/4 | 23/23 |
+| `ask_user` during the Goal turn | 7/50 | 0/130 |
+| Goal still parsed after that rejection | 7/7 | none seen |
+| Same question asked twice, verbatim | 1/40 | 0/120 |
+| Fresh session (request, goal, answers as text): answered question asked again | 0/10 | 0/30 |
+| Restart shape (guard note, answers as text, same session): asked again | 0/10 | 0/29 |
+| Questions run ends with empty text | 0/60 | 0/128 |
+| Real repo, 10 sessions: goal parsed | 10/10 | 5/10 |
+| Real repo: sessions that hit a guard or the output limit | 0/10 | 6/10 |
+| Real repo, questions per session | 2 to 7 | 0 to 4 |
+
+The 7 bad quotes on Qwen: 2 wrong paths, 3 quotes of several lines, 2 misquotes.
+
+Shipped code (`harness/questions-product.ts`), Qwen, fixture, 10 sessions: goal 10/10, ended
+10/10, cache rule 59/59. "Not asking yet" fired 3 times and "Give 2 to 5 options." once, and
+every one of those sessions still finished. Real repo, 5 sessions: goal 5/5, 13 questions, every
+quote verified, cache rule 61/61, no restart.
+
+Gemma 12B limit, not caused by this step: on the real repo the Goal turn alone, with no
+`ask_user` tool, ran to the output limit in 6 of 6 finished sessions, about 350 s each. No guard
+catches a thinking or repeated-text runaway.
+
+The Gemma restart run had 30 sessions. One ran away in its Goal turn and never reached the
+questions.
+
+Reviewed in seven rounds by a second model, each claim checked and each real one pinned by a
+test that fails when the fixed line is broken again. Left as is: with no tool call ids from the
+server, two calls of one tool that end out of order can swap.
+
+Open: the "one question per call" refusal was never triggered by a model. The hand-over wording
+is pi-task's and was not re-measured on the main model. Qwen cells have 10 sessions, not 30.

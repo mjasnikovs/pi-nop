@@ -5,6 +5,7 @@ type Paint = (text: string) => string
 type Focusable = Component & {handleInput(data: string): void}
 
 const edges = 4
+const frameRows = 3
 
 const boxed = (child: Focusable, title: string, border: Paint, accent: Paint): Focusable => ({
     render: width => {
@@ -24,5 +25,5 @@ const boxed = (child: Focusable, title: string, border: Paint, accent: Paint): F
     handleInput: data => child.handleInput(data)
 })
 
-export {boxed}
+export {boxed, frameRows}
 export type {Focusable}

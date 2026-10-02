@@ -55,6 +55,17 @@ describe('createToolCall', () => {
         expect(onTrip).toHaveBeenCalledTimes(1)
     })
 
+    test('a tool that waits on the user gets no timer', () => {
+        const clock = fakeClock()
+        const onTrip = trip()
+        const guard = createToolCall(onTrip, minute, clock, new Set(['ask_user']))
+        guard.onEvent(start('ask_user', {question: 'which?'}, 'call-1'))
+        clock.advance(5 * minute)
+
+        expect(onTrip).not.toHaveBeenCalled()
+        expect(clock.pending()).toBe(0)
+    })
+
     test('dispose cancels every running timer', () => {
         const clock = fakeClock()
         const onTrip = trip()

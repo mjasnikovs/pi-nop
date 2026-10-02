@@ -1,4 +1,4 @@
-import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
+import {afterAll, beforeEach, describe, expect, jest, mock, test} from 'bun:test'
 import type {ExtensionAPI, SessionStats, ToolDefinition} from '@earendil-works/pi-coding-agent'
 import type {AssistantMessage, StopReason} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
@@ -218,9 +218,27 @@ describe('runSubagent', () => {
             settingsManager,
             resourceLoader: expect.any(Object),
             tools: [],
+            customTools: [],
             thinkingLevel: 'high',
             model: undefined
         })
+    })
+
+    test('a custom tool is passed on and its name joins the allowlist', async () => {
+        const askUser = {name: 'ask_user'} as unknown as NonNullable<
+            Parameters<typeof runSubagent>[3]['customTools']
+        >[number]
+        await runSubagent('task', undefined, noProgress, {
+            ...sessionOptions,
+            customTools: [askUser]
+        })
+
+        expect(createAgentSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tools: [...sessionOptions.tools, 'ask_user'],
+                customTools: [askUser]
+            })
+        )
     })
 
     test('forwards an explicit model', async () => {
@@ -638,6 +656,19 @@ describe('guards', () => {
         expect(createAgentSession).toHaveBeenCalledTimes(1)
     })
 
+    test('a task function is read again for the restart', async () => {
+        loopOnce()
+        const tasks = ['first', 'second']
+        const result = await subagentSession(sessionOptions).prompt(
+            () => tasks.shift() ?? '',
+            undefined,
+            noProgress
+        )
+        expect(session.prompt.mock.calls[0][0]).toBe('first')
+        expect(session.prompt.mock.calls[1][0]).toEndWith('\n\nsecond')
+        expect(result.details.task).toBe('second')
+    })
+
     test('the third attempt carries the second hint only, not the first', async () => {
         session.onPrompt = () => {
             for (let i = 0; i < 5; i += 1) session.emit(loopCall)
@@ -754,6 +785,39 @@ describe('guards', () => {
             runSubagent('task', controller.signal, noProgress, sessionOptions)
         ).rejects.toThrow('Subagent aborted')
         expect(session.prompt).toHaveBeenCalledTimes(1)
+    })
+
+    describe('a tool call that takes an hour', () => {
+        const waited = {type: 'tool_execution_start', toolCallId: 'q', toolName: 'ask_user'}
+        const hour = 60 * 60_000
+
+        const waitOnce = () => {
+            session.onPrompt = () => {
+                session.emit({...waited, args: {question: 'which?'}})
+                jest.advanceTimersByTime(hour)
+                session.messages = [assistant()]
+                return Promise.resolve()
+            }
+        }
+        test('is left alone when the tool waits on the user', async () => {
+            jest.useFakeTimers()
+            waitOnce()
+            const result = await runSubagent('task', undefined, noProgress, {
+                ...sessionOptions,
+                waitingTools: ['ask_user']
+            }).finally(() => jest.useRealTimers())
+            expect(session.abort).not.toHaveBeenCalled()
+            expect(result.details.restarts).toBe(0)
+        })
+
+        test('trips the tool-call guard for any other tool', async () => {
+            jest.useFakeTimers()
+            waitOnce()
+            const run = runSubagent('task', undefined, noProgress, sessionOptions).finally(() =>
+                jest.useRealTimers()
+            )
+            await expect(run).rejects.toThrow('Subagent killed by the guard: tool-call')
+        })
     })
 
     test('a restart keeps the slot it holds', async () => {

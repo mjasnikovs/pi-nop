@@ -1,5 +1,10 @@
 import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
-import type {ExtensionAPI, ExtensionContext, ToolDefinition} from '@earendil-works/pi-coding-agent'
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+    ExtensionToolContext,
+    ToolDefinition
+} from '@earendil-works/pi-coding-agent'
 import type {Api, Model} from '@earendil-works/pi-ai'
 import type {TObject, TOptional, TString} from 'typebox'
 import type {SubagentOptions} from '../../../src/subagent/subagent'
@@ -56,7 +61,7 @@ const project = (range: string, files: Record<string, string | object> = {}) =>
 const ask = async (cwd: string, module = 'lib') => {
     const result = await tool().execute('id', {module, query: 'how to pad'}, undefined, undefined, {
         cwd
-    } as unknown as ExtensionContext)
+    } as unknown as ExtensionToolContext)
     const [task, , , used] = runSubagent.mock.calls[0]
     return {text: (result.content[0] as {text: string}).text, task, used}
 }
