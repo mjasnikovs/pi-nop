@@ -108,7 +108,8 @@ export default function (pi: ExtensionAPI) {
                 return
             }
 
-            await ctx.ui.custom<undefined>(
+            // Not awaited: a reload drops the overlay unsettled, and a waiting handler blocks pi.
+            const opened = ctx.ui.custom<undefined>(
                 (_tui, theme, _keybindings, done) => {
                     const items = panelItems(config, models, text => theme.fg('muted', text))
                     const list = new SettingsList(
@@ -130,6 +131,7 @@ export default function (pi: ExtensionAPI) {
                 },
                 {overlay: true}
             )
+            opened.catch((failure: unknown) => ctx.ui.notify(String(failure), 'error'))
         }
     })
 }

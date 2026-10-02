@@ -318,6 +318,25 @@ describe('/plan', () => {
         await settle()
     })
 
+    test('the command returns while the panel is open', async () => {
+        custom.mockReturnValueOnce(new Promise(() => undefined))
+        const returned = commands
+            .get('plan')
+            ?.handler('', ctx)
+            .then(() => true)
+        expect(await Promise.race([returned, settle()])).toBe(true)
+    })
+
+    test('a panel that fails to open reports it and stops the run', async () => {
+        prompt.mockImplementationOnce(() => new Promise(() => undefined))
+        custom.mockReturnValueOnce(Promise.reject(new Error('boom')))
+        await commands.get('plan')?.handler('fix', ctx)
+        await settle()
+
+        expect(notify).toHaveBeenCalledWith('Error: boom', 'error')
+        expect(dispose).toHaveBeenCalledTimes(1)
+    })
+
     test('pi shutting down disposes the session', async () => {
         await commands.get('plan')?.handler('', ctx)
         type('fix the greeting')

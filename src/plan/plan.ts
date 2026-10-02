@@ -203,10 +203,12 @@ export default function (pi: ExtensionAPI) {
 
             const text = args.trim()
             if (text !== '' && state !== idle) save(idle)
-            const opened = open(ctx)
-
+            // Not awaited: a reload drops the overlay unsettled, and a waiting handler blocks pi.
+            open(ctx).catch((failure: unknown) => {
+                closeSubagent()
+                ctx.ui.notify(String(failure), 'error')
+            })
             if (text !== '') void refine(ctx, text)
-            await opened
         }
     })
 

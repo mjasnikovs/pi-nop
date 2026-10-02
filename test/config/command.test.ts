@@ -471,6 +471,23 @@ describe('nop-config command', () => {
         expect(loadConfig()).toEqual({staleMinutes: 20, restarts: 0})
     })
 
+    test('the command returns while the panel is open', async () => {
+        custom.mockReturnValueOnce(new Promise(() => undefined))
+        const returned = registered()
+            .handler('', makeCtx())
+            .then(() => true)
+        const turn = new Promise(resolve => setTimeout(resolve, 0))
+        expect(await Promise.race([returned, turn])).toBe(true)
+    })
+
+    test('a panel that fails to open reports it', async () => {
+        custom.mockReturnValueOnce(Promise.reject(new Error('boom')))
+        await registered().handler('', makeCtx())
+        await new Promise(resolve => setTimeout(resolve, 0))
+
+        expect(notify).toHaveBeenCalledWith('Error: boom', 'error')
+    })
+
     test('writes nothing until a row changes', async () => {
         await openPanel()
 
