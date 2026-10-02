@@ -312,11 +312,13 @@ pi shutdown dispose it.
 The panel has a step strip, the goal, a subagent status line, a pi-tui Input that always takes
 typing, a pi-tui SelectList menu (Accept the goal, Send to main context, Close), and a hint
 line that names what Enter does right now. Empty input: Enter runs the highlighted row. Typed
-text: Enter sends it as a change, Esc clears it. Esc on an empty input closes and aborts a run. State is saved with `appendEntry` and shown again on reopen.
+text: Enter sends it as a change, Esc clears it. Esc on an empty input hides the panel and asks through pi's `ctx.ui.select`: Keep planning, or
+Close and stop. Only the second closes the panel and aborts a run. The Close row closes without
+asking. State is saved with `appendEntry` and shown again on reopen.
 
 Dropped on the way: a `submit_goal` tool in the main context with a modal input dialog, then
 the same with a Ctrl+Alt+Y shortcut, then Ctrl+Y and Ctrl+G inside the panel. Chords and modals
-both lost to a visible menu.
+both lost to a visible menu. The close warning is the one modal.
 
 Subagent goal prompt, `harness/goal-run.ts`, Gemma 4 12B, 10 runs per prompt, layout
 `GOAL: <sentence>`:

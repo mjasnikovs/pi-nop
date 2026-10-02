@@ -28,10 +28,12 @@ const escape = '\x1b'
 const up = '\x1b[A'
 const down = '\x1b[B'
 const width = 60
+const wide = 100
 const change = mock((_text: string) => undefined)
 const accept = mock((_text: string) => undefined)
 const handOver = mock((_text: string) => undefined)
 const close = mock((_text: string) => undefined)
+const leave = mock((_text: string) => undefined)
 const repaint = mock(() => undefined)
 const state = (over: Partial<PanelState> = {}): PanelState => ({
     accepted: false,
@@ -44,11 +46,11 @@ const type = (panel: Panel, text: string) => {
     for (const char of text) panel.handleInput(char)
 }
 
-const hint = (panel: Panel) => panel.render(width).at(-1)
+const hint = (panel: Panel) => panel.render(wide).at(-1)
 let panel: Panel
 beforeEach(() => {
-    for (const fn of [change, accept, handOver, close, repaint]) fn.mockClear()
-    panel = new PlanPanel(theme, repaint, {change, accept, handOver, close})
+    for (const fn of [change, accept, handOver, close, leave, repaint]) fn.mockClear()
+    panel = new PlanPanel(theme, repaint, {change, accept, handOver, close, leave})
 })
 
 describe('PlanPanel', () => {
@@ -91,15 +93,16 @@ describe('PlanPanel', () => {
         expect(panel.render(width).join('\n')).not.toContain('fix it')
     })
 
-    test('escape clears typed text before it closes', () => {
+    test('escape clears typed text before it leaves', () => {
         panel.setState(state())
         type(panel, 'fix it')
         panel.handleInput(escape)
-        expect(close).not.toHaveBeenCalled()
+        expect(leave).not.toHaveBeenCalled()
         expect(panel.render(width).join('\n')).not.toContain('fix it')
 
         panel.handleInput(escape)
-        expect(close).toHaveBeenCalledTimes(1)
+        expect(leave).toHaveBeenCalledTimes(1)
+        expect(close).not.toHaveBeenCalled()
     })
 
     test('a goal shows the menu with accept first', () => {
@@ -110,7 +113,9 @@ describe('PlanPanel', () => {
         expect(text).toContain(rows.accept.label)
         expect(text).toContain(rows.handOver.label)
         expect(text).toContain(rows.close.label)
-        expect(hint(panel)).toBe('type to change  ·  ↑↓ pick  ·  enter accept the goal')
+        expect(hint(panel)).toBe(
+            'type to change  ·  ↑↓ pick  ·  enter accept the goal  ·  esc close'
+        )
     })
 
     test('enter on an empty input runs the highlighted row', () => {
@@ -119,7 +124,9 @@ describe('PlanPanel', () => {
         expect(accept).toHaveBeenCalledTimes(1)
 
         panel.handleInput(down)
-        expect(hint(panel)).toBe('type to change  ·  ↑↓ pick  ·  enter send to main context')
+        expect(hint(panel)).toBe(
+            'type to change  ·  ↑↓ pick  ·  enter send to main context  ·  esc close'
+        )
         panel.handleInput(enter)
         expect(handOver).toHaveBeenCalledTimes(1)
 
@@ -127,6 +134,7 @@ describe('PlanPanel', () => {
         panel.handleInput(up)
         panel.handleInput(enter)
         expect(close).toHaveBeenCalledTimes(1)
+        expect(leave).not.toHaveBeenCalled()
     })
 
     test('typed text takes enter away from the menu', () => {
@@ -178,7 +186,7 @@ describe('PlanPanel', () => {
         panel.handleInput(enter)
         expect(change).not.toHaveBeenCalled()
         panel.handleInput(escape)
-        expect(close).toHaveBeenCalledTimes(1)
+        expect(leave).toHaveBeenCalledTimes(1)
         panel.setState(state())
     })
 

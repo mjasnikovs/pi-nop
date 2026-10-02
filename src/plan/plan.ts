@@ -4,12 +4,14 @@ import type {
     ExtensionContext,
     SessionEntry
 } from '@earendil-works/pi-coding-agent'
+import type {OverlayHandle} from '@earendil-works/pi-tui'
 
 import {boxed} from '../config/box'
 import {configuredOptions, subagentSession} from '../subagent/subagent'
 import type {SubagentSession} from '../subagent/subagent'
 import {progressLabel} from '../subagent/progress'
 import {oneLine} from '../subagent/subagentTui'
+import {whileHidden} from '../tui/hidden'
 import {goalPrompt, goalTask, parseGoal} from './goal'
 import {PlanPanel} from './panel'
 import type {PanelState} from './panel'
@@ -19,6 +21,9 @@ const title = 'PLAN'
 const noGoalLine = 'The subagent gave no GOAL line. Send your text again or reword it.'
 const tuiOnly = 'Plan mode needs the interactive UI.'
 const overlayOptions = {width: '80%', maxHeight: '80%'} as const
+const closeTitle = 'Close plan? A running subagent stops.'
+const keepLabel = 'Keep planning'
+const stopLabel = 'Close and stop'
 
 type PlanState = {
     request?: string
@@ -130,8 +135,19 @@ export default function (pi: ExtensionAPI) {
         }
     }
 
-    const open = (ctx: ExtensionContext): Promise<void> =>
-        ctx.ui.custom<void>(
+    const open = (ctx: ExtensionContext): Promise<void> => {
+        let overlay: OverlayHandle | undefined
+
+        // pi's setHidden(false) on a closed overlay focuses the dead panel, so done() comes last.
+        const askClose = async (done: () => void): Promise<void> => {
+            const answer = await whileHidden(overlay, () =>
+                ctx.ui.select(closeTitle, [keepLabel, stopLabel])
+            )
+
+            if (answer === stopLabel) done()
+        }
+
+        return ctx.ui.custom<void>(
             (tui, theme, _keybindings, done) => {
                 const panel = new PlanPanel(theme, () => tui.requestRender(), {
                     change: text => void refine(ctx, text),
@@ -146,7 +162,8 @@ export default function (pi: ExtensionAPI) {
                         save(idle)
                         if (goal !== undefined) pi.sendUserMessage(goal)
                     },
-                    close: () => done()
+                    close: () => done(),
+                    leave: () => void askClose(done)
                 })
                 repaint = (): void => {
                     panel.setState(panelState())
@@ -167,8 +184,15 @@ export default function (pi: ExtensionAPI) {
                     }
                 }
             },
-            {overlay: true, overlayOptions}
+            {
+                overlay: true,
+                overlayOptions,
+                onHandle: handle => {
+                    overlay = handle
+                }
+            }
         )
+    }
     pi.registerCommand('plan', {
         description: 'Open the planning panel. Text after the command is sent as the request.',
         handler: async (args, ctx) => {
@@ -194,5 +218,5 @@ export default function (pi: ExtensionAPI) {
     pi.on('session_shutdown', closeSubagent)
 }
 
-export {noGoalLine, tuiOnly}
+export {closeTitle, keepLabel, noGoalLine, stopLabel, tuiOnly}
 export type {PlanState}

@@ -22,10 +22,10 @@ type PanelState = {
     error?: string
 }
 
-type Action = 'change' | 'accept' | 'handOver' | 'close'
+type Action = 'change' | 'accept' | 'handOver' | 'close' | 'leave'
 type PanelActions = Record<Action, (text: string) => void>
 
-const rows: Record<Exclude<Action, 'change'>, SelectItem> = {
+const rows: Record<Exclude<Action, 'change' | 'leave'>, SelectItem> = {
     accept: {value: 'accept', label: 'Accept the goal'},
     handOver: {value: 'handOver', label: 'Send to main context'},
     close: {value: 'close', label: 'Close'}
@@ -108,7 +108,7 @@ class PlanPanel implements Focusable {
             ...(state.running ? [] : this.input.render(width)),
             ...(menu.length === 0 ? [] : ['', ...menu]),
             '',
-            this.hints()
+            ...wrapTextWithAnsi(this.hints(), width)
         ]
     }
 
@@ -122,7 +122,7 @@ class PlanPanel implements Focusable {
 
         if (matchesKey(data, escapeKey)) {
             if (typing) this.input.setValue('')
-            else this.actions.close('')
+            else this.actions.leave('')
         } else if (this.state.running) return
         else if (matchesKey(data, enterKey)) {
             if (typing) this.submit()
@@ -170,7 +170,8 @@ class PlanPanel implements Focusable {
         return [
             'type to change',
             '↑↓ pick',
-            `enter ${(menu[this.selected]?.label ?? '').toLowerCase()}`
+            `enter ${(menu[this.selected]?.label ?? '').toLowerCase()}`,
+            'esc close'
         ]
     }
 

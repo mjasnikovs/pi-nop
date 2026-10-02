@@ -34,7 +34,14 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({
     })
 }))
 
-const {default: register, noGoalLine, tuiOnly} = await import('../../src/plan/plan')
+const {
+    default: register,
+    closeTitle,
+    keepLabel,
+    noGoalLine,
+    stopLabel,
+    tuiOnly
+} = await import('../../src/plan/plan')
 
 type Panel = {
     render(width: number): string[]
@@ -42,6 +49,7 @@ type Panel = {
     dispose?(): void
 }
 type Factory = (tui: unknown, theme: Theme, keybindings: unknown, done: () => void) => Panel
+type Options = {onHandle: (handle: {setHidden: (hidden: boolean) => void}) => void}
 type Command = {handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>}
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown
 
@@ -67,19 +75,24 @@ let panel: Panel | undefined
 let closed = false
 const tui = {requestRender: (): void => undefined}
 // Like pi, closing the overlay disposes its component.
-const custom = mock((factory: Factory, _options: unknown) => {
+const setHidden = mock((_hidden: boolean) => undefined)
+const custom = mock((factory: Factory, options: Options) => {
     const component = factory(tui, theme, undefined, () => {
         closed = true
         component.dispose?.()
     })
     panel = component
+    options.onHandle({setHidden})
     return Promise.resolve()
 })
+const select = mock((_title: string, _options: string[]) =>
+    Promise.resolve<string | undefined>(stopLabel)
+)
 const notify = mock((_text: string, _level: string) => undefined)
 const entries: {type: string; customType?: string; data?: unknown}[] = []
 const ctx = {
     mode: 'tui',
-    ui: {custom, notify, theme},
+    ui: {custom, notify, select, theme},
     sessionManager: {getBranch: () => entries}
 } as unknown as ExtensionContext & ExtensionCommandContext
 
@@ -98,7 +111,7 @@ beforeEach(() => {
     panel = undefined
     closed = false
     const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
-    for (const fn of fakes) fn.mockClear()
+    for (const fn of [...fakes, select, setHidden]) fn.mockClear()
     register(pi)
 })
 
@@ -107,7 +120,7 @@ describe('/plan', () => {
         await commands.get('plan')?.handler('', ctx)
 
         expect(custom).toHaveBeenCalledTimes(1)
-        expect(custom.mock.calls[0]?.[1]).toEqual({
+        expect(custom.mock.calls[0]?.[1]).toMatchObject({
             overlay: true,
             overlayOptions: {width: '80%', maxHeight: '80%'}
         })
@@ -164,6 +177,7 @@ describe('/plan', () => {
         panel?.handleInput(enter)
         await settle()
         panel?.handleInput(escape)
+        await settle()
 
         expect(closed).toBe(true)
         expect(dispose).toHaveBeenCalledTimes(1)
@@ -238,6 +252,7 @@ describe('/plan', () => {
 
         expect(screen()).toContain('turn 1')
         panel?.handleInput(escape)
+        await settle()
     })
 
     test('queue notices do not count as turns', async () => {
@@ -253,6 +268,7 @@ describe('/plan', () => {
         expect(screen()).toContain('starting…')
         expect(screen()).not.toContain('turn')
         panel?.handleInput(escape)
+        await settle()
     })
 
     test('accept clears a stale error', async () => {
@@ -299,6 +315,7 @@ describe('/plan', () => {
         await repainted
         tui.requestRender = () => undefined
         panel?.handleInput(escape)
+        await settle()
     })
 
     test('pi shutting down disposes the session', async () => {
@@ -380,6 +397,50 @@ describe('/plan', () => {
         expect(screen()).not.toContain('✓ GOAL')
         expect(screen()).toContain('Fix the typo.')
         panel?.handleInput(escape)
+        await settle()
+    })
+
+    test('escape asks first, and keep planning leaves the run alone', async () => {
+        let signal: AbortSignal | undefined
+        prompt.mockImplementationOnce((_task, given) => {
+            signal = given as AbortSignal
+            return new Promise(() => undefined)
+        })
+        select.mockResolvedValueOnce(keepLabel)
+        await commands.get('plan')?.handler('', ctx)
+        type('fix')
+        panel?.handleInput(enter)
+        panel?.handleInput(escape)
+        await settle()
+
+        expect(select).toHaveBeenCalledWith(closeTitle, [keepLabel, stopLabel])
+        expect(setHidden.mock.calls).toEqual([[true], [false]])
+        expect(closed).toBe(false)
+        expect(signal?.aborted).toBe(false)
+        expect(dispose).not.toHaveBeenCalled()
+        select.mockResolvedValueOnce(stopLabel)
+        panel?.handleInput(escape)
+        await settle()
+    })
+
+    test('escape in the dialog keeps the panel open', async () => {
+        select.mockResolvedValueOnce(undefined)
+        await commands.get('plan')?.handler('', ctx)
+        panel?.handleInput(escape)
+        await settle()
+
+        expect(select).toHaveBeenCalledTimes(1)
+        expect(closed).toBe(false)
+    })
+
+    test('the close row closes without asking', async () => {
+        await commands.get('plan')?.handler('fix', ctx)
+        await settle()
+        panel?.handleInput('\x1b[A')
+        panel?.handleInput(enter)
+
+        expect(select).not.toHaveBeenCalled()
+        expect(closed).toBe(true)
     })
 
     test('escape closes and aborts a running subagent', async () => {
@@ -392,6 +453,7 @@ describe('/plan', () => {
         type('fix')
         panel?.handleInput(enter)
         panel?.handleInput(escape)
+        await settle()
 
         expect(closed).toBe(true)
         expect(signal?.aborted).toBe(true)
