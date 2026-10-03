@@ -399,7 +399,8 @@ Code refuses a call in the Goal turn, a blank question, fewer than two distinct 
 that is not one whole line of the named file, and a second question while one is on screen. The
 quoted file is found through pi's own read tool, so a path resolves as the model's read did. It
 may be outside cwd, and only a regular file is read. A question asked again gets its saved
-answer. The run's last text is ignored. Finish and Change goal close the session. A failed run
+answer. The run's last text is ignored. Finish and Change goal close the session. Since section
+12 the end of the run and Finish both start the steps run. A failed run
 or a reopened panel offers "Ask questions", which starts a fresh session with request, goal and
 answers as text.
 
@@ -565,3 +566,176 @@ without that sentence was stopped after 5 sessions, 4 goals, by the owner: about
 arm cannot show a difference. So the sentence is not measured.
 
 Not measured: Qwen, the runaway with no visible output, and the hint sentence above.
+
+## 12. Steps step in the panel, measured
+
+Built 2026-10-03 on pi 1.0.0. When the questions run ends, or the user picks Finish, a steps run
+starts in the same subagent session, or in a fresh one after Finish. The reply is a text layout,
+checked in code and sent back with a note when it fails, as the Goal turn does. No new tool: the
+tool list and the system prompt stay as they are. The rules go as a user message with every steps
+turn and every change (`stepsRules` in `src/plan/steps.ts`):
+
+```
+The questions are done.
+You are planning, not implementing. Do not change any file.
+Now plan the steps that reach the goal, in order. Read the code you need.
+Answer with this layout and nothing else:
+STEPS:
+1. <one line per step>
+FILES:
+- <path> (existing|new)
+```
+
+Code refuses a reply with no `STEPS:` or `FILES:` line, each alone on its line, with no step, with
+a line between the two that is not `N.` or `N)` plus text, or with a line after `FILES:` that is
+not `- <path> (existing|new)`, or with a `*` in a path. Text before `STEPS:` is ignored. A file tagged
+`existing` must be a regular file that pi's read tool finds, a file tagged `new` must not be. The
+file is found, not opened. Each refusal goes back
+as a note that ends on the layout, from the `restarts` budget. The last reply is checked again in
+the panel, since nothing is sent back once the budget is spent. A reply that still fails is a
+failed run: the session closes, the panel shows an error, saved steps stay.
+
+Typed text with steps on screen is a change: `Change asked by the user: <text>`, a blank line,
+the rules. A session that does not hold the plan (reopened panel, failed run, Finish) first gets
+request, goal and answers as text, and for a change the saved steps under `Current steps:`.
+Hand over sends goal, decisions and the filled layout, as a follow-up when the main agent is
+busy. Before this pi refused that message and the plan was lost.
+
+The panel shows STEPS and FILES under the answers. On a short screen each step becomes one line,
+then the files a count, then the steps a count. "Plan steps" is offered when the questions are
+done and no steps are saved.
+
+Harness: `harness/steps/`, runs in `harness/runs/steps/`. `steps-probe.ts` holds its own copy of
+the strings and the parser, `steps-product.ts` runs the shipped code. Shipped goal and questions
+code in every arm, a scripted user who picks the first option, fixture repo, requests "Make the
+greeting nicer." and "Add a farewell command to the CLI.". The change is "Also update the
+README.". Valid means parsed and every file tag right, after send backs.
+
+Gemma 4 12B, 30 sessions per cell:
+
+| Arm | Steps valid | Change turn valid |
+|---|---|---|
+| Text layout, same session | 60/60 | 58/60, 2 ran to the output limit |
+| `submit_steps` tool in the session from turn one, then `DONE` | 58/60 | 45/58, 12 answered `GOAL:` |
+| Text layout, fresh session after the questions | 60/60 | 60/60 |
+| Change sent without the rules | 30/30 | 27/30, layout note sent 24 times |
+| Change in a fresh session, steps as text | 29/29 | 28/29 |
+| Same, README on disk, change "Also add a README." | 30/30 | 30/30 |
+
+The tool lost: change turn 45/58 against 58/60, Fisher p = 0.002. It was also called in the Goal
+or Questions turn 12 times in 60 sessions. A tool that ends the turn with `terminate` was tried
+once: `subagentSession` reads the tool-call turn as an empty answer, and its change turn ran to
+the output limit. Not pursued.
+
+The file check is needed. In the fresh arm Gemma tagged a README that is not on disk `existing`
+in 28 of 30 change turns, and the note fixed 28 of 28. With the README on disk and the change
+"Also add a README." it tagged it `new` in 27 of 30, and the note fixed 27 of 27. A directory was
+tagged `existing` once in 360 turns and got the "not on disk" note, which fixed it.
+
+Qwen 3.8 27B, 10 sessions per cell:
+
+| Arm | Steps valid | Change turn valid |
+|---|---|---|
+| Text layout, same session | 20/20 | 20/20 |
+| Text layout, fresh session after the questions | 10/10 | 10/10 |
+| Change in a fresh session, steps as text | 10/10 | 10/10 |
+| Same, README on disk, change "Also add a README." | 10/10 | 10/10, tagged `new` once, fixed |
+
+Real repo, request "Add a Steps step to the /plan panel.":
+
+| Check | Qwen, 5 sessions | Gemma, 10 sessions |
+|---|---|---|
+| Goal parsed | 5/5 | 7/10 |
+| Reached the steps turn | 5/5 | 5/10, the rest killed in Goal or Questions |
+| Steps valid | 5/5, no send back | 4/5, 1 killed by the loop guard |
+| Change valid | 5/5 | 4/4 |
+| Steps per plan | 5 to 9 | 1 to 6 |
+| Files per plan | 5 to 8 | 1 to 3 |
+| Steps turn | 63 to 239 s | 5 to 43 s |
+
+`ask_user` in a steps or change turn: Gemma 0 in 40 logged sessions, Qwen 2 in 50. It gets the
+Goal-turn refusal, "Not asking yet. Give the GOAL line.". Both replies then missed the layout and
+the layout note fixed both. Two cases cannot measure another wording, so it stays.
+
+Parser. The probe dropped `` ` `` and `*` from every line. The shipped parser drops them only to
+match the two labels and the file rows, so a step keeps `export * from`. Replayed over every valid
+logged reply: Gemma 388/388, Qwen 103/103, same steps and files as the probe's parser. Text
+before `STEPS:` in 5 Qwen replies, none on Gemma. No path listed twice. A step written as
+`**1.** text` would be sent back; none in 491 replies.
+
+A change rewrites the whole plan. Every earlier step came back word for word in 32 of 58 Gemma
+change turns in the same session, and in 1 of 28 when the steps came as text.
+
+Hand over, `harness/steps/handover.ts`: the message as the first prompt of the main model, default
+tools, fixture repo, 10 runs per arm. Goal "Add a farewell command to the CLI that prints
+"Goodbye, <name>!"".
+
+| Arm | Model | Plan files changed, no other | Tests pass | Command works |
+|---|---|---|---|---|
+| Goal + a decision "test in the existing file" | Qwen | 10/10 | 10/10 | 10/10 |
+| The same + 3 steps, 3 files | Qwen | 10/10 | 10/10 | 10/10 |
+| Goal alone | Qwen | 0/10 of the 4 below | 10/10 | 10/10 |
+| Goal + 4 steps, 4 files, one a new README | Qwen | 10/10 | 10/10 | 10/10 |
+| Goal + a decision "test in the existing file" | Gemma | 10/10 | 10/10 | 10/10 |
+| The same + 3 steps, 3 files | Gemma | 10/10 | 9/10 | 9/10 |
+| Goal alone | Gemma | 0/10 of the 4 below | 10/10 | 10/10 |
+| Goal + 4 steps, 4 files, one a new README | Gemma | 10/10 | 6/10 | 6/10 |
+
+With the goal alone the test file was touched 7/10 on Qwen and 3/10 on Gemma, the README never.
+The main model follows the file list. Gemma breaks the code more often when the plan gives it more
+to write.
+
+Shipped code, `steps-product.ts`, same scenarios:
+
+| Arm | Model | Sessions | Steps valid | Change turn valid |
+|---|---|---|---|---|
+| Same session, farewell | Gemma | 15 | 15/15 | 15/15 |
+| Change in a fresh session, nicer | Gemma | 15 | 15/15 | 15/15 |
+| Same session, farewell | Qwen | 10 | 10/10 | 10/10 |
+| Change in a fresh session, nicer | Qwen | 10 | 10/10 | 10/10 |
+
+After that run two reviews tightened the parser: a label with text after it on the same line, a
+file row with no path, and a path with a `*` are now refused, and the check no longer reads the
+file. The shipped parser replayed over all 623 valid logged replies, shipped runs included: the
+same steps and files on every one.
+
+The shipped code again after those fixes:
+
+| Arm | Model | Sessions | Steps valid | Change turn valid |
+|---|---|---|---|---|
+| Same session, farewell | Gemma | 15 | 15/15 | 15/15 |
+| Change in a fresh session, nicer | Gemma | 15 | 15/15 | 15/15 |
+| Same, README on disk, change "Also add a README." | Gemma | 15 | 15/15 | 15/15 |
+| Same session, farewell | Qwen | 5 | 5/5 | 5/5 |
+
+In the README arm every one of the 15 change turns had a reply sent back, and every plan ended
+with the README tagged `existing`. A first run of that arm, 15 on Gemma and 5 on Qwen, is void:
+the probe did not write the README. Those logs are in `harness/runs/steps/void/`.
+
+Real TUI in tmux, fixture repo. On Gemma: request, accept, steps on screen, a typed change, hand
+over, and the main model started on the steps. At 46 and 30 rows the whole plan shows, at 20 rows
+the goal is one line and steps and files are counts. On Qwen, each seen once:
+
+- Hand over while the main agent ran `sleep 240`: pi showed the message as a queued follow-up.
+  When the command ended the main agent wrote `test/farewell.test.js`, the plan's `new` file.
+- Close and reopen: the saved steps showed, and a typed change in the fresh session added a
+  step and a file.
+- Esc during the steps run, close, reopen: "Plan steps" led the menu and made the steps.
+- Finish on a waiting question: the steps run started at once and ended with valid steps.
+
+Reviewed twice by a second model before the code was written and twice after. Each real claim is
+a test that fails when the line is broken: 37 mutants, 37 killed.
+
+Left as is: pi-tui's `stripTerminalSequences` leaves some cursor sequences in model text, as it
+does for questions. A layout inside a code fence, or with `### STEPS:` as its label, is sent back.
+The `new` tag only says that no regular file is at that path. So a directory, a `{a,b}` glob,
+or a path with a note after it all pass as `new`, and `path:12` tagged `existing` gets the "not
+on disk" note and is accepted once tagged `new`. The layout given back with `<path> (new)` filled in passes. None
+of these shapes is in the 631 logged replies. The last reply is checked against the disk a second time, so a file the main
+agent creates in between fails the run. One note names one file, so two wrong files cost two of the budget, and with
+`restarts` 0 a wrong tag fails the turn. After
+Finish the old run holds its slot until it settles. A hand over during compaction or with no model
+is still lost. An Enter pressed as a run ends lands on "Send to main context".
+
+Not measured: a path outside cwd, which is not refused. A cap on step count or line length. The
+panel on a plan longer than the screen shows counts, seen at 20 rows in tmux.

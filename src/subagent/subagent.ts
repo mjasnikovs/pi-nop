@@ -72,7 +72,7 @@ type SubagentResult = {
 }
 
 /** The note sent back for an answer the caller cannot use. Undefined accepts the answer. */
-type SendBack = (answer: string) => string | undefined
+type SendBack = (answer: string) => string | undefined | Promise<string | undefined>
 
 type SubagentSession = {
     prompt: (
@@ -244,7 +244,7 @@ const runAttempt = async (
 }
 
 // A failed or cut-off run is reported as that, not sent back.
-const rejection = (last: AssistantMessage, sendBack: SendBack | undefined): string | undefined =>
+const rejection = (last: AssistantMessage, sendBack: SendBack | undefined): ReturnType<SendBack> =>
     last.stopReason === 'stop' ? sendBack?.(turnText(last)) : undefined
 
 const answerText = (last: AssistantMessage): string => {
@@ -341,7 +341,12 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
                     if (watch.last === undefined) throw new Error(SubagentErrors.EmptyOutput)
 
                     const sent =
-                        restarts < settings.restarts ? rejection(watch.last, sendBack) : undefined
+                        restarts < settings.restarts ?
+                            await rejection(watch.last, sendBack)
+                        :   undefined
+
+                    if (disposed) throw new Error(SubagentErrors.Disposed)
+                    if (signal?.aborted) throw new Error(SubagentErrors.Aborted)
 
                     // The rejected answer stays in the conversation, so the note goes alone.
                     if (sent !== undefined) {

@@ -15,6 +15,7 @@ import type {Focusable} from '../config/box'
 import {oneLine} from '../subagent/subagentTui'
 import {formatElapsed, Spinner, spinnerFrames} from '../tui/spinner'
 import type {Decision, Question} from './ask'
+import type {PlanFile, Steps} from './steps'
 
 const steps = ['Goal', 'Questions', 'Steps', 'Hand over'] as const
 const escapeKey = Key.escape
@@ -22,7 +23,7 @@ const enterKey = Key.enter
 const upKey = Key.up
 const downKey = Key.down
 
-type PanelState = {
+type PanelState = Steps & {
     request?: string
     goal?: string
     accepted: boolean
@@ -39,6 +40,7 @@ type Action =
     | 'accept'
     | 'answer'
     | 'ask'
+    | 'plan'
     | 'finish'
     | 'changeGoal'
     | 'handOver'
@@ -51,6 +53,7 @@ const row = (action: Action, label: string): Row => ({value: action, label, acti
 const rows = {
     accept: row('accept', 'Accept the goal'),
     ask: row('ask', 'Ask questions'),
+    plan: row('plan', 'Plan steps'),
     finish: row('finish', 'Finish questions'),
     changeGoal: row('changeGoal', 'Change goal'),
     handOver: row('handOver', 'Send to main context'),
@@ -73,8 +76,9 @@ const menuFor = (state: PanelState): Row[] => {
     if (state.question !== undefined)
         return [...optionRows(state.question), rows.finish, rows.changeGoal, rows.close]
     if (!state.accepted) return [rows.accept, rows.handOver, rows.close]
-    if (state.asked) return [rows.handOver, rows.changeGoal, rows.close]
-    return [rows.ask, rows.handOver, rows.changeGoal, rows.close]
+    if (!state.asked) return [rows.ask, rows.handOver, rows.changeGoal, rows.close]
+    if (state.steps.length === 0) return [rows.plan, rows.handOver, rows.changeGoal, rows.close]
+    return [rows.handOver, rows.changeGoal, rows.close]
 }
 
 // A list that scrolls shows at least one row and pi-tui's position line under it.
@@ -90,9 +94,15 @@ const sharedInOrder = (room: number, lists: string[][]): string[][] => {
     })
 }
 
-// After accept, typed text is only ever the answer to the question on screen.
 const takesText = (state: PanelState): boolean =>
-    !state.running && (!state.accepted || state.question !== undefined)
+    !state.running && (!state.accepted || state.question !== undefined || state.steps.length > 0)
+
+const currentStep = (state: PanelState): number => {
+    if (!state.accepted) return steps.indexOf('Goal')
+    if (!state.asked) return steps.indexOf('Questions')
+    if (state.running || state.steps.length === 0) return steps.indexOf('Steps')
+    return steps.indexOf('Hand over')
+}
 
 const stepStrip = (theme: Theme, current: number): string =>
     steps
@@ -112,12 +122,37 @@ const listTheme = (active: boolean): SelectListTheme => {
 }
 
 // What the body gives up to fit the screen. Each step keeps the cuts of the one before it.
-type Compact = {answers: boolean; goal: boolean; options: boolean}
-const tightest: Compact = {answers: true, goal: true, options: true}
+type Compact = {
+    answers: boolean
+    goal: boolean
+    options: boolean
+    steps: boolean
+    files: boolean
+    stepCount: boolean
+}
+const roomy: Compact = {
+    answers: false,
+    goal: false,
+    options: false,
+    steps: false,
+    files: false,
+    stepCount: false
+}
+const tightest: Compact = {
+    answers: true,
+    goal: true,
+    options: true,
+    steps: true,
+    files: true,
+    stepCount: true
+}
 const compactSteps: Compact[] = [
-    {answers: false, goal: false, options: false},
-    {answers: true, goal: false, options: false},
-    {answers: true, goal: true, options: false},
+    roomy,
+    {...roomy, answers: true},
+    {...roomy, answers: true, goal: true},
+    {...roomy, answers: true, goal: true, options: true},
+    {...tightest, files: false, stepCount: false},
+    {...tightest, stepCount: false},
     tightest
 ]
 
@@ -140,7 +175,41 @@ const body = (theme: Theme, state: PanelState, width: number, compact: Compact):
     return [
         ...goal,
         ...answered(theme, state.decisions, width, compact.answers),
+        ...planned(theme, state, width, compact),
         ...asking(theme, state.question, width, compact.options)
+    ]
+}
+
+const fileCount = (files: PlanFile[]): string[] =>
+    files.length === 0 ? [] : [`Files: ${String(files.length)}`]
+
+const fileRows = (theme: Theme, files: PlanFile[], width: number, counted: boolean): string[] => {
+    if (files.length === 0) return []
+    if (counted) return ['', ...fileCount(files)]
+    return [
+        '',
+        theme.fg('accent', theme.bold('FILES')),
+        ...files.flatMap(({path, state}) =>
+            wrapTextWithAnsi(`${shown(path)} ${theme.fg('dim', `(${state})`)}`, width)
+        )
+    ]
+}
+
+const stepRows = (planSteps: string[], width: number, short: boolean): string[] =>
+    planSteps.flatMap((step, index) => {
+        const text = numbered(shown(step), index)
+
+        return short ? [truncateToWidth(oneLine(text), width, '…')] : wrapTextWithAnsi(text, width)
+    })
+
+const planned = (theme: Theme, plan: Steps, width: number, compact: Compact): string[] => {
+    if (plan.steps.length === 0) return []
+    if (compact.stepCount) return [`Steps: ${String(plan.steps.length)}`, ...fileCount(plan.files)]
+    return [
+        '',
+        theme.fg('accent', theme.bold('STEPS')),
+        ...stepRows(plan.steps, width, compact.steps),
+        ...fileRows(theme, plan.files, width, compact.files)
     ]
 }
 
@@ -206,6 +275,8 @@ class PlanPanel implements Focusable {
         accepted: false,
         asked: false,
         decisions: [],
+        steps: [],
+        files: [],
         running: false,
         status: ''
     }
@@ -274,7 +345,7 @@ class PlanPanel implements Focusable {
 
     private head(width: number, compact: Compact, state = this.state): string[] {
         return [
-            stepStrip(this.theme, state.accepted ? 1 : 0),
+            stepStrip(this.theme, currentStep(state)),
             '',
             ...body(this.theme, state, width, compact),
             ''

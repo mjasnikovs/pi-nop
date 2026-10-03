@@ -1046,6 +1046,57 @@ describe('send back', () => {
         await expect(run()).rejects.toThrow('Subagent run failed: boom')
         expect(wantsGoal).not.toHaveBeenCalled()
     })
+
+    describe('a check that takes time', () => {
+        const slow = (during: () => void, verdict?: string) =>
+            mock(async (_answer: string) => {
+                await Promise.resolve()
+                during()
+                return verdict
+            })
+        test('its note is sent like any other', async () => {
+            answers(says('a list'), says('GOAL: x'))
+            const check = mock((answer: string) =>
+                Promise.resolve(answer.startsWith('GOAL:') ? undefined : note)
+            )
+            const result = await subagentSession(sessionOptions).prompt(
+                'task',
+                undefined,
+                noProgress,
+                check
+            )
+            expect(result.text).toBe('GOAL: x')
+            expect(session.prompt.mock.calls.map(call => call[0])).toEqual(['task', note])
+        })
+
+        test('an abort during it fails the run, whatever it answers', async () => {
+            answers(says('GOAL: x'))
+            const controller = new AbortController()
+            const handle = subagentSession(sessionOptions)
+            await expect(
+                handle.prompt(
+                    'task',
+                    controller.signal,
+                    noProgress,
+                    slow(() => controller.abort())
+                )
+            ).rejects.toThrow('Subagent aborted')
+        })
+
+        test('a close during it fails the run, and no note is sent', async () => {
+            answers(says('a list'))
+            const handle = subagentSession(sessionOptions)
+            await expect(
+                handle.prompt(
+                    'task',
+                    undefined,
+                    noProgress,
+                    slow(() => handle.dispose(), note)
+                )
+            ).rejects.toThrow('Subagent session was closed')
+            expect(session.prompt).toHaveBeenCalledTimes(1)
+        })
+    })
 })
 
 describe('extension', () => {

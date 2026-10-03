@@ -20,7 +20,6 @@ const cwd = tempTree({
     'src/greet.js': `${greet}\n\nexport const shout = () => {\r\n    return 1\r\n}\n`,
     'docs/note.md': 'x'
 })
-const call = {signal: undefined, ctx: undefined as never}
 const decisions = [
     {question: 'Which greeting?', answer: 'Hello'},
     {question: 'Add a test?', answer: 'No'}
@@ -45,13 +44,15 @@ describe('distinctOptions', () => {
 describe('quoted', () => {
     const source = 'src/greet.js'
     test('a whole line of the file passes, whatever its indent and line ending', async () => {
-        expect(await quoted(cwd, {file: source, line: `  ${greet}  `}, call)).toBe(true)
-        expect(await quoted(cwd, {file: source, line: 'return 1'}, call)).toBe(true)
+        expect(await quoted(cwd, {file: source, line: `  ${greet}  `}, undefined)).toBe(true)
+        expect(await quoted(cwd, {file: source, line: 'return 1'}, undefined)).toBe(true)
     })
 
     test('the path is found the way the read tool finds it', async () => {
-        expect(await quoted(cwd, {file: `@${source}`, line: greet}, call)).toBe(true)
-        expect(await quoted(cwd, {file: `file://${cwd}/${source}`, line: greet}, call)).toBe(true)
+        expect(await quoted(cwd, {file: `@${source}`, line: greet}, undefined)).toBe(true)
+        expect(await quoted(cwd, {file: `file://${cwd}/${source}`, line: greet}, undefined)).toBe(
+            true
+        )
     })
 
     test.skipIf(Bun.which('mkfifo') === null)(
@@ -59,36 +60,39 @@ describe('quoted', () => {
         async () => {
             execFileSync('mkfifo', [`${cwd}/pipe`])
 
-            expect(await quoted(cwd, {file: 'pipe', line: greet}, call)).toBe(false)
+            expect(await quoted(cwd, {file: 'pipe', line: greet}, undefined)).toBe(false)
         }
     )
 
     test('an abort during the read ends the check', async () => {
-        const aborted = {...call, signal: AbortSignal.abort()}
-        expect(await quoted(cwd, {file: source, line: greet}, aborted)).toBe(false)
+        expect(await quoted(cwd, {file: source, line: greet}, AbortSignal.abort())).toBe(false)
     })
 
     test('NONE in both fields passes, in one field it does not', async () => {
-        expect(await quoted(cwd, {file: 'NONE', line: ' NONE '}, call)).toBe(true)
-        expect(await quoted(cwd, {file: 'NONE', line: greet}, call)).toBe(false)
-        expect(await quoted(cwd, {file: source, line: 'NONE'}, call)).toBe(false)
+        expect(await quoted(cwd, {file: 'NONE', line: ' NONE '}, undefined)).toBe(true)
+        expect(await quoted(cwd, {file: 'NONE', line: greet}, undefined)).toBe(false)
+        expect(await quoted(cwd, {file: source, line: 'NONE'}, undefined)).toBe(false)
     })
 
     test('part of a line, two lines or an empty quote fail', async () => {
-        expect(await quoted(cwd, {file: source, line: 'export const greet'}, call)).toBe(false)
-        expect(await quoted(cwd, {file: source, line: `${greet}\n`.repeat(2)}, call)).toBe(false)
-        expect(await quoted(cwd, {file: source, line: '  '}, call)).toBe(false)
+        expect(await quoted(cwd, {file: source, line: 'export const greet'}, undefined)).toBe(false)
+        expect(await quoted(cwd, {file: source, line: `${greet}\n`.repeat(2)}, undefined)).toBe(
+            false
+        )
+        expect(await quoted(cwd, {file: source, line: '  '}, undefined)).toBe(false)
     })
 
     test('a missing file, a directory and a path through a file fail without throwing', async () => {
-        expect(await quoted(cwd, {file: 'src/panel.js', line: greet}, call)).toBe(false)
-        expect(await quoted(cwd, {file: 'src', line: greet}, call)).toBe(false)
-        expect(await quoted(cwd, {file: 'src/greet.js/x', line: greet}, call)).toBe(false)
+        expect(await quoted(cwd, {file: 'src/panel.js', line: greet}, undefined)).toBe(false)
+        expect(await quoted(cwd, {file: 'src', line: greet}, undefined)).toBe(false)
+        expect(await quoted(cwd, {file: 'src/greet.js/x', line: greet}, undefined)).toBe(false)
     })
 
     test('a file outside cwd counts, since the read tool can open it', async () => {
-        expect(await quoted(`${cwd}/docs`, {file: '../src/greet.js', line: greet}, call)).toBe(true)
-        expect(await quoted('/', {file: `${cwd}/src/greet.js`, line: greet}, call)).toBe(true)
+        expect(await quoted(`${cwd}/docs`, {file: '../src/greet.js', line: greet}, undefined)).toBe(
+            true
+        )
+        expect(await quoted('/', {file: `${cwd}/src/greet.js`, line: greet}, undefined)).toBe(true)
     })
 })
 
@@ -123,15 +127,21 @@ describe('questionsTask', () => {
 
 describe('handOverMessage', () => {
     test('with no answers it is the goal alone', () => {
-        expect(handOverMessage('Be nice.', [])).toBe('Be nice.')
+        expect(handOverMessage('Be nice.', [], '')).toBe('Be nice.')
     })
 
     test('answers follow the goal as settled decisions', () => {
-        const message = handOverMessage('Be nice.', decisions)
+        const message = handOverMessage('Be nice.', decisions, '')
         expect(message).toStartWith('Be nice.\n\nPLANNING DECISIONS — these were settled')
         expect(message).toEndWith(
             'as usual.\n\nQ1: Which greeting?\nA1: Hello\nQ2: Add a test?\nA2: No'
         )
+    })
+
+    test('the steps come last, after a blank line', () => {
+        const plan = 'STEPS:\n1. Greet.\nFILES:\n- a.js (existing)'
+        expect(handOverMessage('Be nice.', [], plan)).toBe(`Be nice.\n\n${plan}`)
+        expect(handOverMessage('Be nice.', decisions, plan)).toEndWith(`A2: No\n\n${plan}`)
     })
 })
 

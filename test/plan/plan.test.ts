@@ -1,4 +1,4 @@
-import {beforeEach, describe, expect, mock, test} from 'bun:test'
+import {afterEach, beforeEach, describe, expect, mock, test} from 'bun:test'
 import type {
     ExtensionAPI,
     ExtensionCommandContext,
@@ -9,15 +9,20 @@ import type {
 import type {SendBack, SubagentTask, SubagentUpdate} from '../../src/subagent/subagent'
 import {acceptRules, AskErrors, handOverMessage} from '../../src/plan/ask'
 import {goalPrompt, sendBackGoal} from '../../src/plan/goal'
+import {layoutNote, stepsRules} from '../../src/plan/steps'
+import {tempTree} from '../tree'
 
 type Reply = {content: {text: string}[]}
 type Tool = {execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<Reply>}
 type SessionOptions = {prompt: string; customTools: Tool[]; waitingTools: string[]}
 
+const stepsReply = 'STEPS:\n1. Fix greet.\nFILES:\n- src/greet.js (existing)'
+const textOf = (task: SubagentTask): string => (typeof task === 'string' ? task : task())
 const prompt = mock(
-    (_task: SubagentTask, _signal: unknown, onUpdate: SubagentUpdate, _sendBack?: SendBack) => {
+    (task: SubagentTask, _signal: unknown, onUpdate: SubagentUpdate, _sendBack?: SendBack) => {
+        const text = textOf(task).endsWith(stepsRules) ? stepsReply : 'GOAL: Fix the typo.'
         onUpdate?.({type: 'turn', text: 'reading', details: {} as never})
-        return Promise.resolve({text: 'GOAL: Fix the typo.', details: {} as never})
+        return Promise.resolve({text, details: {} as never})
     }
 )
 const dispose = mock(() => undefined)
@@ -46,6 +51,7 @@ const {
     closeTitle,
     keepLabel,
     noGoalLine,
+    noStepsLine,
     stopLabel,
     tuiOnly
 } = await import('../../src/plan/plan')
@@ -70,7 +76,7 @@ const width = 60
 const handlers = new Map<string, Handler>()
 const commands = new Map<string, Command>()
 const appendEntry = mock((_type: string, _data: unknown) => undefined)
-const sendUserMessage = mock((_text: string) => undefined)
+const sendUserMessage = mock((_text: string, _options?: {deliverAs: string}) => undefined)
 const pi = {
     on: (name: string, handler: Handler) => handlers.set(name, handler),
     registerCommand: (name: string, command: Command) => commands.set(name, command),
@@ -97,13 +103,22 @@ const select = mock((_title: string, _options: string[]) =>
 )
 const notify = mock((_text: string, _level: string) => undefined)
 const entries: {type: string; customType?: string; data?: unknown}[] = []
+const cwd = tempTree({'src/greet.js': 'x', 'README.md': 'x'})
 const ctx = {
+    cwd,
     mode: 'tui',
     ui: {custom, notify, select, theme},
     sessionManager: {getBranch: () => entries}
 } as unknown as ExtensionContext & ExtensionCommandContext
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
+// The steps check reads the disk, so one settle does not cover it.
+const until = async (ready: () => boolean): Promise<void> => {
+    while (!ready()) await settle()
+}
+
+const untilPlanned = () => until(() => screen().includes('1. Fix greet.'))
 
 const type = (text: string) => {
     for (const char of text) panel?.handleInput(char)
@@ -117,14 +132,11 @@ const greeting = {question: 'Which greeting?', options: ['Hello', 'Hi'], evidenc
 const testing = {question: 'Add a test?', options: ['Yes', 'No'], evidence: none}
 const turn = {type: 'turn' as const, text: '', details: {} as never}
 const done = {text: 'DONE', details: {} as never}
-const goalEntry = {request: 'fix', goal: 'Fix the typo.', decisions: [], asked: false}
+const noSteps = {steps: [], files: []}
+const planned = {steps: ['Fix greet.'], files: [{path: 'src/greet.js', state: 'existing'}]}
+const goalEntry = {request: 'fix', goal: 'Fix the typo.', decisions: [], asked: false, ...noSteps}
 const tool = (): Tool => subagentSession.mock.calls.at(-1)?.[0].customTools[0] as Tool
-
-const taskOf = (call: number): string => {
-    const task = prompt.mock.calls.at(call)?.[0] ?? ''
-
-    return typeof task === 'string' ? task : task()
-}
+const taskOf = (call: number): string => textOf(prompt.mock.calls.at(call)?.[0] ?? '')
 
 const asks = (said: string[], ...questions: unknown[]) =>
     prompt.mockImplementationOnce(async (_task, signal, onUpdate) => {
@@ -155,6 +167,10 @@ beforeEach(() => {
     const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
     for (const fn of [...fakes, select, setHidden]) fn.mockClear()
     register(pi)
+})
+// A steps run still checking the disk would save into the next test.
+afterEach(() => {
+    handlers.get('session_shutdown')?.({}, ctx)
 })
 
 describe('/plan', () => {
@@ -328,7 +344,7 @@ describe('/plan', () => {
         expect(screen()).not.toContain(noGoalLine.slice(0, 30))
         expect(lastEntry()).toMatchObject({accepted: true})
         expect(taskOf(-1)).toBe(`Request: fix\nCurrent goal: Fix the typo.\n\n${acceptRules}`)
-        await settle()
+        await untilPlanned()
     })
 
     test('text after the command starts a new plan over a saved one', async () => {
@@ -423,11 +439,14 @@ describe('/plan', () => {
         await openWithGoal()
         expect(prompt.mock.calls.at(-1)?.[3]).toBe(sendBackGoal)
 
+        prompt.mockImplementationOnce(() => new Promise(() => undefined))
         panel?.handleInput(enter)
         await settle()
 
         expect(prompt).toHaveBeenCalledTimes(2)
         expect(prompt.mock.calls.at(-1)?.[3]).toBeUndefined()
+        panel?.handleInput(escape)
+        await settle()
     })
 
     test('no GOAL line shows an error and keeps the old state', async () => {
@@ -457,16 +476,16 @@ describe('/plan', () => {
         panel?.handleInput(enter)
         await settle()
         prompt.mockResolvedValueOnce(done)
+        prompt.mockRejectedValueOnce(new Error('boom'))
         panel?.handleInput(enter)
         await settle()
         expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true})
         expect(screen()).toContain('✓ GOAL')
 
-        panel?.handleInput(enter)
+        pick(1)
         expect(closed).toBe(true)
-        expect(dispose).toHaveBeenCalledTimes(1)
-        expect(sendUserMessage).toHaveBeenCalledWith('Fix the typo.')
-        expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false})
+        expect(sendUserMessage).toHaveBeenCalledWith('Fix the typo.', {deliverAs: 'followUp'})
+        expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false, ...noSteps})
     })
 
     test('accept runs the questions in the same session, with the tool in it from the start', async () => {
@@ -587,13 +606,16 @@ describe('/plan', () => {
         await settle()
         type('Hey there')
         panel?.handleInput(enter)
-        await settle()
+        await untilPlanned()
         panel?.handleInput(enter)
 
         const decisions = [{question: 'Which greeting?', answer: 'Hey there'}]
         expect(said).toEqual(['Answer: Hey there'])
-        expect(sendUserMessage).toHaveBeenCalledWith(handOverMessage('Fix the typo.', decisions))
-        expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false})
+        expect(sendUserMessage).toHaveBeenCalledWith(
+            handOverMessage('Fix the typo.', decisions, stepsReply),
+            {deliverAs: 'followUp'}
+        )
+        expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false, ...noSteps})
     })
 
     test('the tool is refused during the goal turn', async () => {
@@ -630,7 +652,7 @@ describe('/plan', () => {
         expect(said).toEqual([`Error: ${AskErrors.OnePerCall}`, 'Answer: Hello', 'Answer: No'])
     })
 
-    test('finish stops the run, closes the session and ends the step', async () => {
+    test('finish stops the run, closes the session and plans the steps in a fresh one', async () => {
         const said: string[] = []
         await openWithGoal()
         prompt.mockImplementationOnce(async (_task, signal) => {
@@ -644,14 +666,16 @@ describe('/plan', () => {
         panel?.handleInput(enter)
         await settle()
         pick(2)
-        await settle()
+        await untilPlanned()
 
         expect(said).toEqual([`Error: ${AskErrors.Closed}`])
         expect(dispose).toHaveBeenCalledTimes(1)
-        expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true})
+        expect(subagentSession).toHaveBeenCalledTimes(2)
+        expect(taskOf(-1)).toBe(`Request: fix\nCurrent goal: Fix the typo.\n\n${stepsRules}`)
+        expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true, ...planned})
         expect(screen()).not.toContain('Which greeting?')
         expect(screen()).not.toContain('Subagent aborted')
-        expect(screen()).toContain('Send to main context')
+        expect(screen()).toContain('1. Fix greet.')
     })
 
     test('change goal drops the answers and the next change starts a fresh session', async () => {
@@ -725,10 +749,16 @@ describe('/plan', () => {
         await commands.get('plan')?.handler('', ctx)
         asks(said, {...greeting, question: 'which  greeting?'})
         panel?.handleInput(enter)
-        await settle()
+        await untilPlanned()
 
         expect(said).toEqual(['Answer: Hello'])
-        expect(lastEntry()).toEqual({...goalEntry, accepted: true, decisions, asked: true})
+        expect(lastEntry()).toEqual({
+            ...goalEntry,
+            accepted: true,
+            decisions,
+            asked: true,
+            ...planned
+        })
     })
 
     test('escape asks first, and keep planning leaves the run alone', async () => {
@@ -789,6 +819,244 @@ describe('/plan', () => {
         expect(closed).toBe(true)
         expect(signal?.aborted).toBe(true)
         expect(dispose).toHaveBeenCalledTimes(1)
+    })
+
+    describe('steps', () => {
+        const withSteps = async () => {
+            await openWithGoal()
+            prompt.mockResolvedValueOnce(done)
+            panel?.handleInput(enter)
+            await untilPlanned()
+        }
+
+        const saved = (over: object) => {
+            entries.push({
+                type: 'custom',
+                customType: 'plan-mode',
+                data: {...goalEntry, accepted: true, asked: true, ...over}
+            })
+            handlers.get('session_start')?.({}, ctx)
+            return commands.get('plan')?.handler('', ctx)
+        }
+
+        const check = (): SendBack => prompt.mock.calls.at(-1)?.[3] as SendBack
+        test('the questions run ending starts the steps run in the same session', async () => {
+            await withSteps()
+
+            expect(subagentSession).toHaveBeenCalledTimes(1)
+            expect(prompt).toHaveBeenCalledTimes(3)
+            expect(taskOf(-1)).toBe(stepsRules)
+            expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true, ...planned})
+            expect(screen()).toContain('✓ Steps   ● Hand over')
+            expect(screen()).toContain('src/greet.js (existing)')
+        })
+
+        test('no menu shows between the two runs', async () => {
+            await openWithGoal()
+            prompt.mockResolvedValueOnce(done)
+            prompt.mockImplementationOnce(() => new Promise(() => undefined))
+            panel?.handleInput(enter)
+            await settle()
+
+            expect(screen()).toContain('● Steps')
+            expect(screen()).not.toContain('Send to main context')
+        })
+
+        test('typed text is a change, sent to the same session with the rules', async () => {
+            await withSteps()
+            prompt.mockResolvedValueOnce({
+                text: 'STEPS:\n1. Fix greet.\n2. Update the README.\nFILES:\n- README.md (existing)',
+                details: {} as never
+            })
+            type('also the README')
+            panel?.handleInput(enter)
+            await until(() => screen().includes('2. Update the README.'))
+
+            expect(subagentSession).toHaveBeenCalledTimes(1)
+            expect(taskOf(-1)).toBe(`Change asked by the user: also the README\n\n${stepsRules}`)
+            expect(lastEntry()).toMatchObject({
+                goal: 'Fix the typo.',
+                steps: ['Fix greet.', 'Update the README.'],
+                files: [{path: 'README.md', state: 'existing'}]
+            })
+        })
+
+        test('the check handed to the subagent sends back a bad layout and a wrong tag', async () => {
+            await withSteps()
+
+            expect(await check()('I did it.')).toBe(layoutNote)
+            expect(await check()('STEPS:\n1. x\nFILES:\n- src/none.js (existing)')).toContain(
+                'src/none.js is marked existing but is not on disk.'
+            )
+            expect(await check()('STEPS:\n1. x\nFILES:\n- README.md (new)')).toContain(
+                'README.md is marked new but is on disk.'
+            )
+            expect(await check()(stepsReply)).toBeUndefined()
+        })
+
+        test('a last reply that fails the check is a failed run, and plan steps starts cold', async () => {
+            await openWithGoal()
+            prompt.mockResolvedValueOnce(done)
+            prompt.mockResolvedValueOnce({
+                text: 'STEPS:\n1. x\nFILES:\n- src/none.js (existing)',
+                details: {} as never
+            })
+            panel?.handleInput(enter)
+            await until(() => screen().includes(noStepsLine))
+
+            expect(dispose).toHaveBeenCalledTimes(1)
+            expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true})
+            expect(screen()).toContain('Plan steps')
+
+            panel?.handleInput(enter)
+            await untilPlanned()
+            expect(subagentSession).toHaveBeenCalledTimes(2)
+            expect(taskOf(-1)).toBe(`Request: fix\nCurrent goal: Fix the typo.\n\n${stepsRules}`)
+            expect(screen()).not.toContain(noStepsLine)
+        })
+
+        test('a reply with no layout is a failed run too', async () => {
+            await openWithGoal()
+            prompt.mockResolvedValueOnce(done)
+            prompt.mockResolvedValueOnce({text: 'I did it.', details: {} as never})
+            panel?.handleInput(enter)
+            await until(() => screen().includes(noStepsLine))
+
+            expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true})
+        })
+
+        test('a failed change keeps the saved steps, and the next change tells a fresh session', async () => {
+            await withSteps()
+            prompt.mockRejectedValueOnce(new Error('Subagent run failed: boom'))
+            type('also the README')
+            panel?.handleInput(enter)
+            await until(() => screen().includes('boom'))
+
+            expect(screen()).toContain('1. Fix greet.')
+            expect(lastEntry()).toMatchObject(planned)
+
+            type('no test')
+            panel?.handleInput(enter)
+            await until(() => !screen().includes('boom'))
+            expect(subagentSession).toHaveBeenCalledTimes(2)
+            expect(taskOf(-1)).toBe(
+                [
+                    'Request: fix',
+                    'Current goal: Fix the typo.',
+                    'Current steps:',
+                    stepsReply,
+                    'Change asked by the user: no test',
+                    '',
+                    stepsRules
+                ].join('\n')
+            )
+        })
+
+        test('closing during the check saves no steps', async () => {
+            await openWithGoal()
+            prompt.mockResolvedValueOnce(done)
+            prompt.mockImplementationOnce(() => {
+                setImmediate(() => handlers.get('session_shutdown')?.({}, ctx))
+                return Promise.resolve({text: stepsReply, details: {} as never})
+            })
+            panel?.handleInput(enter)
+            await until(() => prompt.mock.calls.length === 3)
+            await check()(stepsReply)
+            await settle()
+
+            expect(lastEntry()).toEqual({...goalEntry, accepted: true, asked: true})
+        })
+
+        test('a questions run that ends after the panel closed starts no steps run', async () => {
+            await openWithGoal()
+            prompt.mockImplementationOnce(() => {
+                handlers.get('session_shutdown')?.({}, ctx)
+                return Promise.resolve(done)
+            })
+            panel?.handleInput(enter)
+            await settle()
+
+            expect(prompt).toHaveBeenCalledTimes(2)
+            expect(lastEntry()).toEqual({...goalEntry, accepted: true})
+        })
+
+        test('ask_user in a steps turn is refused', async () => {
+            await openWithGoal()
+            prompt.mockResolvedValueOnce(done)
+            prompt.mockImplementationOnce(async () => {
+                await tool().execute('id', greeting)
+                return done
+            })
+            panel?.handleInput(enter)
+
+            await until(() => screen().includes(AskErrors.NotYet))
+        })
+
+        test('reopening shows the saved steps and takes a change', async () => {
+            await saved(planned)
+
+            expect(screen()).toContain('1. Fix greet.')
+            expect(screen()).toContain('✓ Steps   ● Hand over')
+            expect(screen()).toContain('> ')
+        })
+
+        test('an entry saved before the steps step offers plan steps', async () => {
+            entries.push({
+                type: 'custom',
+                customType: 'plan-mode',
+                data: {request: 'fix', goal: 'Fix the typo.', accepted: true, asked: true}
+            })
+            handlers.get('session_start')?.({}, ctx)
+            await commands.get('plan')?.handler('', ctx)
+
+            expect(screen()).toContain('● Steps')
+            panel?.handleInput(enter)
+            await untilPlanned()
+            expect(lastEntry()).toMatchObject(planned)
+        })
+
+        test('a session that planned the steps gets a later change alone', async () => {
+            await saved(noSteps)
+            panel?.handleInput(enter)
+            await untilPlanned()
+            type('no test')
+            panel?.handleInput(enter)
+            await until(() => prompt.mock.calls.length === 2)
+
+            expect(subagentSession).toHaveBeenCalledTimes(1)
+            expect(taskOf(-1)).toBe(`Change asked by the user: no test\n\n${stepsRules}`)
+        })
+
+        test('change goal drops the steps', async () => {
+            await withSteps()
+            pick(1)
+
+            expect(lastEntry()).toEqual({...goalEntry, accepted: false})
+            expect(screen()).not.toContain('STEPS')
+        })
+
+        test('text after the command drops the steps', async () => {
+            await saved(planned)
+            await commands.get('plan')?.handler('fix the greeting', ctx)
+            await settle()
+
+            expect(lastEntry()).toEqual({
+                ...goalEntry,
+                request: 'fix the greeting',
+                accepted: false
+            })
+        })
+
+        test('hand over sends the steps after the goal and resets the plan', async () => {
+            await withSteps()
+            panel?.handleInput(enter)
+
+            expect(closed).toBe(true)
+            expect(sendUserMessage).toHaveBeenCalledWith(`Fix the typo.\n\n${stepsReply}`, {
+                deliverAs: 'followUp'
+            })
+            expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false, ...noSteps})
+        })
     })
 
     test('reopening shows the saved goal', async () => {

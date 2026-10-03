@@ -113,8 +113,8 @@ const restarts = choice({
     label: 'restarts',
     description:
         'How many times a run goes again: after a kill, with a hint about what went wrong, or '
-        + 'after /plan sends a goal answer back. 0 keeps the guards, fails on the first kill '
-        + 'and sends nothing back.',
+        + 'after /plan sends a goal or steps answer back. 0 keeps the guards, fails on the first '
+        + 'kill and sends nothing back.',
     levels: [0, 1, 2, 3],
     fallback: 2
 })

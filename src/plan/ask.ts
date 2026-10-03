@@ -1,7 +1,6 @@
 import {readFile, stat} from 'node:fs/promises'
 
-import type {ExtensionToolContext} from '@earendil-works/pi-coding-agent'
-import {createReadToolDefinition, defineTool} from '@earendil-works/pi-coding-agent'
+import {createReadTool, defineTool} from '@earendil-works/pi-coding-agent'
 import {stripTerminalSequences} from '@earendil-works/pi-tui'
 import {type Static, Type} from 'typebox'
 
@@ -56,8 +55,6 @@ type AskHost = {
     show: (question: Question, answer: (text: string) => void) => () => void
 }
 
-type Call = {signal: AbortSignal | undefined; ctx: ExtensionToolContext}
-
 const sameQuestion = (left: string, right: string): boolean => {
     const key = (text: string): string => text.toLowerCase().replace(/\s+/g, ' ').trim()
 
@@ -72,15 +69,21 @@ const distinctOptions = (options: string[]): string[] => [
 
 const isNone = ({file, line}: Evidence): boolean => file.trim() === none && line.trim() === none
 
+// A pipe or a device never ends, and the wait on it would hold the slot.
+const regularFile = async (path: string): Promise<void> => {
+    if (!(await stat(path)).isFile()) throw new Error(path)
+}
+
 // pi's read tool finds the file, so a path the model read with resolves the same way here.
-const fileText = async (cwd: string, file: string, {signal, ctx}: Call): Promise<string> => {
+const fileText = async (
+    cwd: string,
+    file: string,
+    signal: AbortSignal | undefined
+): Promise<string> => {
     let text = ''
-    const read = createReadToolDefinition(cwd, {
+    const read = createReadTool(cwd, {
         operations: {
-            // A pipe or a device never ends, and the wait on it would hold the slot.
-            access: async path => {
-                if (!(await stat(path)).isFile()) throw new Error(path)
-            },
+            access: regularFile,
             readFile: async path => {
                 const buffer = await readFile(path, {signal})
                 text = buffer.toString('utf8')
@@ -88,11 +91,15 @@ const fileText = async (cwd: string, file: string, {signal, ctx}: Call): Promise
             }
         }
     })
-    await read.execute(askToolName, {path: file, limit: 1}, signal, undefined, ctx)
+    await read.execute(askToolName, {path: file, limit: 1}, signal)
     return text
 }
 
-const quoted = async (cwd: string, evidence: Evidence, call: Call): Promise<boolean> => {
+const quoted = async (
+    cwd: string,
+    evidence: Evidence,
+    signal: AbortSignal | undefined
+): Promise<boolean> => {
     if (isNone(evidence)) return true
 
     const wanted = evidence.line.trim()
@@ -100,7 +107,7 @@ const quoted = async (cwd: string, evidence: Evidence, call: Call): Promise<bool
     if (wanted === '') return false
 
     try {
-        const text = await fileText(cwd, evidence.file, call)
+        const text = await fileText(cwd, evidence.file, signal)
         return text.split('\n').some(row => row.trim() === wanted)
     } catch {
         return false
@@ -113,17 +120,23 @@ const transcript = (decisions: Decision[]): string[] =>
         `A${String(index + 1)}: ${answer}`
     ])
 
-const questionsTask = (unseen: GoalTask, decisions: Decision[]): string => {
+const planHead = (unseen: GoalTask, decisions: Decision[]): string[] => {
     const answered = decisions.length === 0 ? [] : [decisionsLabel, ...transcript(decisions)]
-    const head = [goalTask(unseen), ...answered].filter(line => line !== '')
+
+    return [goalTask(unseen), ...answered].filter(line => line !== '')
+}
+
+const questionsTask = (unseen: GoalTask, decisions: Decision[]): string => {
+    const head = planHead(unseen, decisions)
 
     if (head.length === 0) return acceptRules
     return [...head, '', acceptRules].join('\n')
 }
 
-const handOverMessage = (goal: string, decisions: Decision[]): string => {
-    if (decisions.length === 0) return goal
-    return [goal, settled, transcript(decisions).join('\n')].join('\n\n')
+const handOverMessage = (goal: string, decisions: Decision[], plan: string): string => {
+    const answers = decisions.length === 0 ? [] : [settled, transcript(decisions).join('\n')]
+
+    return [goal, ...answers, plan].filter(part => part !== '').join('\n\n')
 }
 
 const shown = (
@@ -158,7 +171,7 @@ const askTool = (host: AskHost) =>
         label: 'Ask user',
         description: askDescription,
         parameters: askParameters,
-        async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+        async execute(_toolCallId, params, signal) {
             if (!host.open()) throw new Error(AskErrors.NotYet)
             if (stripTerminalSequences(params.question).trim() === '')
                 throw new Error(AskErrors.Question)
@@ -166,7 +179,7 @@ const askTool = (host: AskHost) =>
             const options = distinctOptions(params.options)
 
             if (options.length < 2) throw new Error(AskErrors.Options)
-            const verified = await quoted(host.cwd, params.evidence, {signal, ctx})
+            const verified = await quoted(host.cwd, params.evidence, signal)
 
             // pi leaves a waiting tool unsettled on abort, and a listener added after it never fires.
             if (signal?.aborted) throw new Error(AskErrors.Closed)
@@ -196,8 +209,10 @@ export {
     askToolName,
     distinctOptions,
     handOverMessage,
+    planHead,
     questionsTask,
     quoted,
+    regularFile,
     sameQuestion
 }
 export type {AskHost, Decision, Question}

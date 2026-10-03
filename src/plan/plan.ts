@@ -12,15 +12,18 @@ import type {SubagentSession, SubagentUpdate} from '../subagent/subagent'
 import {progressLabel} from '../subagent/progress'
 import {oneLine} from '../subagent/subagentTui'
 import {whileHidden} from '../tui/hidden'
-import {askTool, askToolName, handOverMessage, questionsTask, sameQuestion} from './ask'
+import {askTool, askToolName, handOverMessage, planHead, questionsTask, sameQuestion} from './ask'
 import type {AskHost, Decision, Question} from './ask'
 import {goalPrompt, goalTask, parseGoal, sendBackGoal} from './goal'
 import {PlanPanel} from './panel'
 import type {PanelActions, PanelState} from './panel'
+import {parseSteps, sendBackSteps, stepsTask, stepsText} from './steps'
+import type {Steps} from './steps'
 
 const entryType = 'plan-mode'
 const title = 'PLAN'
 const noGoalLine = 'The subagent gave no GOAL line. Send your text again or reword it.'
+const noStepsLine = 'The subagent gave no steps that pass the checks.'
 const tuiOnly = 'Plan mode needs the interactive UI.'
 // No maxHeight: pi would cut the rows and the input off the bottom. The panel fits itself.
 const overlayOptions = {width: '80%'} as const
@@ -28,7 +31,7 @@ const closeTitle = 'Close plan? A running subagent stops.'
 const keepLabel = 'Keep planning'
 const stopLabel = 'Close and stop'
 
-type PlanState = {
+type PlanState = Steps & {
     request?: string
     goal?: string
     accepted: boolean
@@ -47,7 +50,7 @@ type Run = {
     waiting?: {question: Question; answer: (text: string) => void}
 }
 
-const idle: PlanState = {accepted: false, decisions: [], asked: false}
+const idle: PlanState = {accepted: false, decisions: [], asked: false, steps: [], files: []}
 
 // The goal prompt allows no text before the answer, so tool turns report only their count.
 const runStatus = (text: string, turns: number): string => {
@@ -58,7 +61,7 @@ const runStatus = (text: string, turns: number): string => {
 const isPlanEntry = (entry: SessionEntry): entry is CustomEntry<PlanState> =>
     entry.type === 'custom' && entry.customType === entryType
 
-// An entry saved before the questions step has no decisions and no asked.
+// An entry saved before a later step was built lacks that step's fields.
 const lastState = (ctx: ExtensionContext): PlanState => {
     const saved = ctx.sessionManager
         .getBranch()
@@ -82,6 +85,8 @@ export default function (pi: ExtensionAPI) {
         accepted: state.accepted,
         asked: state.asked,
         decisions: state.decisions,
+        steps: state.steps,
+        files: state.files,
         question: running?.waiting?.question,
         running: running !== undefined && running.waiting === undefined,
         status: running?.status ?? '',
@@ -194,9 +199,39 @@ export default function (pi: ExtensionAPI) {
                 run.controller.signal,
                 onProgress(run)
             )
+            if (run.controller.signal.aborted) return
+            current.knowsGoal = true
+            save({...state, asked: true})
+            void planSteps(ctx)
+        } catch (failure) {
+            failed(run, failure)
+        }
+    }
+
+    const planSteps = async (ctx: ExtensionContext, change?: string): Promise<void> => {
+        const current = openSubagent(ctx)
+        const unseen = {request: state.request, goal: state.goal}
+        const head = current.knowsGoal ? [] : planHead(unseen, state.decisions)
+        const run = start(state.request ?? '', false)
+        const check = sendBackSteps(ctx.cwd, run.controller.signal)
+
+        try {
+            const {text: reply} = await current.session.prompt(
+                stepsTask(head, state, change),
+                run.controller.signal,
+                onProgress(run),
+                check
+            )
+            // The send back is skipped once the restarts are spent, so the last reply is unchecked.
+            const plan = parseSteps(reply)
+            const fault = await check(reply)
+
+            if (run.controller.signal.aborted) return
+            if (plan === undefined || fault !== undefined) throw new Error(noStepsLine)
+
             current.knowsGoal = true
             running = undefined
-            save({...state, asked: true})
+            save({...state, ...plan})
             repaint?.()
         } catch (failure) {
             failed(run, failure)
@@ -263,7 +298,8 @@ export default function (pi: ExtensionAPI) {
         return ctx.ui.custom<void>(
             (tui, theme, _keybindings, done) => {
                 const actions: PanelActions = {
-                    change: text => void refine(ctx, text),
+                    change: text =>
+                        void (state.steps.length > 0 ? planSteps(ctx, text) : refine(ctx, text)),
                     accept: () => {
                         error = undefined
                         save({...state, accepted: true})
@@ -271,10 +307,11 @@ export default function (pi: ExtensionAPI) {
                     },
                     answer: answerQuestion,
                     ask: () => void ask(ctx),
+                    plan: () => void planSteps(ctx),
                     finish: () => {
                         closeSubagent()
                         save({...state, asked: true})
-                        repaint?.()
+                        void planSteps(ctx)
                     },
                     changeGoal: () => {
                         closeSubagent()
@@ -283,9 +320,11 @@ export default function (pi: ExtensionAPI) {
                     },
                     handOver: () => {
                         const {goal, decisions} = state
+                        const message = handOverMessage(goal ?? '', decisions, stepsText(state))
                         done()
                         save(idle)
-                        if (goal !== undefined) pi.sendUserMessage(handOverMessage(goal, decisions))
+                        // Without deliverAs pi refuses a message while the main agent is busy.
+                        if (goal !== undefined) pi.sendUserMessage(message, {deliverAs: 'followUp'})
                     },
                     close: () => done(),
                     leave: () => void askClose(done)
@@ -351,5 +390,5 @@ export default function (pi: ExtensionAPI) {
     pi.on('session_shutdown', closeSubagent)
 }
 
-export {closeTitle, keepLabel, noGoalLine, stopLabel, tuiOnly}
+export {closeTitle, keepLabel, noGoalLine, noStepsLine, stopLabel, tuiOnly}
 export type {PlanState}

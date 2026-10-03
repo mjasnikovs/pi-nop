@@ -135,8 +135,8 @@ describe('panelItems', () => {
                 + 'model spends reading a long prompt.',
             'Kill the run when a single read, grep, find or ls does not return in this time.',
             'How many times a run goes again: after a kill, with a hint about what went wrong, or '
-                + 'after /plan sends a goal answer back. 0 keeps the guards, fails on the first '
-                + 'kill and sends nothing back.'
+                + 'after /plan sends a goal or steps answer back. 0 keeps the guards, fails on '
+                + 'the first kill and sends nothing back.'
         ])
         expect(
             panelItems({staleMinutes: 'off', toolCallMinutes: 5, restarts: 0}, models)

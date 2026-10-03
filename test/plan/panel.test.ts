@@ -36,10 +36,11 @@ const close = mock((_text: string) => undefined)
 const leave = mock((_text: string) => undefined)
 const answer = mock((_text: string) => undefined)
 const ask = mock((_text: string) => undefined)
+const plan = mock((_text: string) => undefined)
 const finish = mock((_text: string) => undefined)
 const changeGoal = mock((_text: string) => undefined)
 const repaint = mock(() => undefined)
-const actions = {change, accept, answer, ask, finish, changeGoal, handOver, close, leave}
+const actions = {change, accept, answer, ask, plan, finish, changeGoal, handOver, close, leave}
 const question = {
     question: 'Which greeting?',
     options: ['Hello, ${name}!', 'A long\nfriendly \x1b[31mgreeting\x1b[0m'],
@@ -50,6 +51,8 @@ const state = (over: Partial<PanelState> = {}): PanelState => ({
     accepted: false,
     asked: false,
     decisions: [],
+    steps: [],
+    files: [],
     running: false,
     status: '',
     ...over
@@ -203,15 +206,132 @@ describe('PlanPanel', () => {
         expect(ask).toHaveBeenCalledTimes(1)
     })
 
-    test('finished questions lead with hand over and offer change goal', () => {
+    test('finished questions with no steps lead with plan steps and take no text', () => {
         panel.setState(state({goal: 'Fix the typo.', accepted: true, asked: true}))
-        expect(panel.render(width).join('\n')).not.toContain(rows.ask.label)
+        const lines = panel.render(width)
+        expect(lines[0]).toBe('✓ Goal   ✓ Questions   ● Steps   ○ Hand over')
+        expect(lines.join('\n')).not.toContain(rows.ask.label)
+        expect(lines.join('\n')).not.toContain('> ')
+        expect(hint(panel)).toBe('↑↓ pick  ·  enter plan steps  ·  esc close')
+        type(panel, 'more')
         panel.handleInput(enter)
-        expect(handOver).toHaveBeenCalledTimes(1)
+        expect(plan).toHaveBeenCalledTimes(1)
+        expect(change).not.toHaveBeenCalled()
 
         panel.handleInput(down)
         panel.handleInput(enter)
+        expect(handOver).toHaveBeenCalledTimes(1)
+        panel.handleInput(down)
+        panel.handleInput(enter)
         expect(changeGoal).toHaveBeenCalledTimes(1)
+    })
+
+    describe('with steps', () => {
+        const planned = {
+            goal: 'Fix the typo.',
+            accepted: true,
+            asked: true,
+            steps: ['Fix `greet` in \x1b[31msrc/greet.js\x1b[0m.', 'Add a test.'],
+            files: [
+                {path: 'src/greet.js', state: 'existing' as const},
+                {path: 'test/greet.test.js', state: 'new' as const}
+            ]
+        }
+        test('the steps and files show, and hand over is the current step and the first row', () => {
+            panel.setState(state(planned))
+            const lines = panel.render(width)
+            expect(lines[0]).toBe('✓ Goal   ✓ Questions   ✓ Steps   ● Hand over')
+            expect(lines.join('\n')).toContain(
+                [
+                    '',
+                    'STEPS',
+                    '1. Fix `greet` in src/greet.js.',
+                    '2. Add a test.',
+                    '',
+                    'FILES',
+                    'src/greet.js (existing)',
+                    'test/greet.test.js (new)',
+                    ''
+                ].join('\n')
+            )
+            expect(lines.join('\n')).not.toContain(rows.plan.label)
+            panel.handleInput(enter)
+            expect(handOver).toHaveBeenCalledTimes(1)
+
+            panel.handleInput(down)
+            panel.handleInput(enter)
+            expect(changeGoal).toHaveBeenCalledTimes(1)
+        })
+
+        test('typed text is a change', () => {
+            panel.setState(state(planned))
+            expect(hint(panel)).toBe(
+                'type to change  ·  ↑↓ pick  ·  enter send to main context  ·  esc close'
+            )
+            type(panel, 'no test')
+            panel.handleInput(enter)
+
+            expect(change).toHaveBeenCalledWith('no test')
+            expect(handOver).not.toHaveBeenCalled()
+        })
+
+        test('a run over saved steps puts the strip back on steps and takes no text', () => {
+            panel.setState(state({...planned, running: true}))
+            type(panel, 'more')
+
+            const lines = panel.render(width)
+            expect(lines[0]).toBe('✓ Goal   ✓ Questions   ● Steps   ○ Hand over')
+            expect(lines.join('\n')).not.toContain('> ')
+        })
+
+        test('a plan with no files has no files heading', () => {
+            panel.setState(state({...planned, files: []}))
+
+            expect(panel.render(width)).not.toContain('FILES')
+        })
+
+        test('a long step wraps to the width', () => {
+            panel.setState(state({...planned, steps: ['word '.repeat(30).trim()]}))
+
+            for (const line of panel.render(width))
+                expect(visibleWidth(line)).toBeLessThanOrEqual(width)
+            expect(
+                panel.render(width).filter(line => line.includes('word')).length
+            ).toBeGreaterThan(1)
+        })
+
+        describe('on a screen that is too short', () => {
+            const long = {...planned, steps: ['word '.repeat(30).trim(), 'Add a test.']}
+            const text = () => panel.render(width).join('\n')
+
+            const fitted = () => {
+                panel.setState(state(long))
+                return panel.render(width).length
+            }
+            test('after the goal, each step shrinks to one line', () => {
+                limit = fitted() - 2
+
+                expect(text()).toContain('…')
+                expect(text()).toContain('FILES\nsrc/greet.js (existing)')
+                expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+            })
+
+            test('then the files shrink to a count', () => {
+                limit = fitted() - 4
+
+                expect(text()).toContain('2. Add a test.\n\nFiles: 2\n')
+                expect(text()).not.toContain('FILES')
+            })
+
+            test('then the steps shrink to a count', () => {
+                limit = fitted() - 6
+
+                expect(text()).toContain('Fix the typo.\nSteps: 2\nFiles: 2\n')
+                expect(text()).not.toContain('STEPS')
+                expect(text()).toContain('→ <Send to main context>')
+                expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+            })
+        })
     })
 
     test('a waiting question shows its quote, full options and one row per option', () => {
@@ -418,13 +538,9 @@ describe('PlanPanel', () => {
 
         test('with no question the room goes to the end of the goal and answers', () => {
             panel.setState(state({...tall, question: undefined, asked: true}))
-            limit = 7
+            limit = 8
             const lines = panel.render(width)
-            expect(lines.slice(0, 3)).toEqual([
-                '✓ Answered questions: 2',
-                '',
-                '→ <Send to main context>'
-            ])
+            expect(lines.slice(0, 3)).toEqual(['✓ Answered questions: 2', '', '→ <Plan steps>'])
             expect(lines.length).toBe(limit)
         })
 
@@ -449,7 +565,7 @@ describe('PlanPanel', () => {
             panel.setState(state({goal: 'Fix the typo.', accepted: true, asked: true}))
             panel.handleInput(enter)
 
-            expect(handOver).toHaveBeenCalledTimes(1)
+            expect(plan).toHaveBeenCalledTimes(1)
             expect(close).not.toHaveBeenCalled()
         })
 
@@ -472,7 +588,7 @@ describe('PlanPanel', () => {
             limit = 9
             const lines = panel.render(width)
             expect(lines).toContain('✓ Answered questions: 2')
-            expect(lines).toContain('→ <Send to main context>')
+            expect(lines).toContain('→ <Plan steps>')
             expect(lines.length).toBeLessThanOrEqual(limit)
         })
     })
