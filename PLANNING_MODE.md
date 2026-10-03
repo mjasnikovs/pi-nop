@@ -477,7 +477,7 @@ quote verified, cache rule 61/61, no restart.
 
 Gemma 12B limit, not caused by this step: on the real repo the Goal turn alone, with no
 `ask_user` tool, ran to the output limit in 6 of 6 finished sessions, about 350 s each. No guard
-catches a thinking or repeated-text runaway.
+catches a thinking or repeated-text runaway. Section 11 adds one.
 
 The Gemma restart run had 30 sessions. One ran away in its Goal turn and never reached the
 questions.
@@ -488,3 +488,80 @@ server, two calls of one tool that end out of order can swap.
 
 Open: the "one question per call" refusal was never triggered by a model. The hand-over wording
 is pi-task's and was not re-measured on the main model. Qwen cells have 10 sessions, not 30.
+
+## 11. Repeat guard, measured
+
+2026-10-03. Gemma 4 12B, Goal turn only, this repo, no `ask_user` tool, 23 turns over two
+requests ("Add a Questions step to the /plan panel.", "Add a Steps step to the /plan panel.").
+Thinking text was logged this time.
+
+| Outcome | Turns |
+|---|---|
+| `GOAL:` line | 14/23 |
+| Ran to the output limit, 325 to 508 s | 7/23 |
+| Killed by the loop guard | 2/23 |
+
+So the runaway is 7/23 here, not the 6/6 of section 10. Six of the seven are one thinking block
+that ends on the same lines over and over, 190k to 290k characters, block size 2 to 105 lines.
+The seventh sent 80k output tokens with 80 characters of thinking and a 183 character `GOAL:`
+line. What those tokens were is not known. The recording proxy did not catch one.
+
+Detector: the non-blank, trimmed lines of one block end on the same run of lines N times in a
+row. Replayed over the 262 healthy messages that had thinking text, over the six repeating
+runaways, and over 10,943 source, JSON and Markdown files of this repo and its `node_modules`,
+those under 300 kB, each one as if a model quoted it whole. "Two different" means the run holds at least two
+different lines.
+
+| Copies | Shortest run, lines | Healthy messages hit | Files hit | Runaways stopped | Slowest stop, characters |
+|---|---|---|---|---|---|
+| 2 | 2 | 3/262 | not run | 6/6 | 16.3k |
+| 3 | 1 | 3/262 | 807 | 6/6 | 18.4k |
+| 3 | 2 | 0/262 | 30 | 6/6 | 18.4k |
+| 4 | 2 | 0/262 | 6 | 6/6 | 20.4k |
+| 6 | 2 | 0/262 | 1 | 6/6 | 24.6k |
+| 8 | 1 | 0/262 | 6 | 6/6 | 28.7k |
+| 8 | 2 | 0/262 | 0 | 6/6 | 28.7k |
+| 8 | 2, two different | 0/262 | 0 | 6/6 | 28.7k |
+
+Three copies was the first pick. A review showed it trips on six closing braces in a row, since
+indent is trimmed, and on `test/subagent/subagent.test.ts` quoted whole. A second review showed
+that any one line sixteen times over still trips at eight copies: an empty grid, a zeroed buffer.
+So the last row shipped as the `repeat` guard, `src/subagent/guards/repeat.ts`. More copies cost
+little, since the runaway does not stop on its own. The shipped code replayed in 7 character
+deltas stops the six after 6.1k to 28.7k characters. It hits none of the 266 messages that did
+not run away: the 262 above and 4 that had no thinking text.
+
+A second scan, `.ts`, `.js`, `.mjs`, `.cjs`, `.json` and `.md` files only, of any size: the shipped
+code hits 1 of 10,798 files, a JSON tree nested eight deep, whose
+closing lines go `}`, `]` eight times. A stack trace of two functions that call each other and a
+retry log with no timestamps trip the same way. Each costs one restart.
+
+A third review timed one line repeated 8,000 times: 16.7 s of CPU, since every run size was
+walked before it was thrown out. Run sizes inside the tail of equal lines are now skipped. A
+fourth review broke that tail with another line every 1,000 lines, 30,000 lines: 92.7 s. One
+look at the line before the tail now rules a size out. A test runs both shapes and fails on the
+test runner's time limit if either comes back.
+
+Left as is, none was seen: a loop of one line, a loop where a number changes each round, a loop
+with no line break. Thinking that arrives after the text of the same message has started joins
+the text's lines, which needs a server that interleaves them.
+
+Live, shipped `subagentSession` with the goal prompt and send back, Gemma 4 12B, this repo, the
+same two requests, 30 sessions, `restarts` 2. The run used the guard before the one-line change.
+
+| Outcome | Sessions |
+|---|---|
+| `GOAL:` line | 23/30 |
+| Killed by the loop guard, budget spent | 4/30 |
+| Killed by the repeat guard, budget spent | 2/30 |
+| Ran to the output limit | 1/30 |
+
+Without the guard 7/23 ran to the limit, now 1/30: Fisher p = 0.015. The repeat guard fired in 12
+sessions, 16 times. What came next: a goal 9, repeat again 4, the loop guard 3. Sessions took 49
+to 642 s, 87 minutes in all. The one at the limit had no restart, so it is not the repeating kind.
+
+The hint ends with "Do not go over a point twice: decide with what you know and answer." An arm
+without that sentence was stopped after 5 sessions, 4 goals, by the owner: about 16 restarts per
+arm cannot show a difference. So the sentence is not measured.
+
+Not measured: Qwen, the runaway with no visible output, and the hint sentence above.

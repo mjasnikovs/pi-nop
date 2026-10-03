@@ -8,6 +8,7 @@ import {realClock} from './guard'
 import {createGround} from './ground'
 import {createLeak} from './leak'
 import {createLoop} from './loop'
+import {createRepeat} from './repeat'
 import {createStale} from './stale'
 import {createToolCall} from './toolCall'
 import {createVisited} from './visited'
@@ -75,7 +76,8 @@ const watchGuards = (
         visited,
         createLoop(trip, visited),
         createGround(trip, visited, settings.waits),
-        createLeak(trip)
+        createLeak(trip),
+        createRepeat(trip, visited)
     ]
     if (settings.staleMs !== undefined) guards.push(createStale(trip, settings.staleMs, clock))
     if (settings.toolCallMs !== undefined)

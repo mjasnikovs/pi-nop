@@ -34,3 +34,6 @@ error. A reply that failed or was cut off at the output limit is not sent back.
 - **churn**: tool results past twice the context window. A local server drops old context
   silently, so this is the model re-reading what it lost.
 - **leak**: the final answer holds `<tool_call>` or `<function=…>` markup instead of a tool call.
+- **repeat**: one thinking or answer block ends on the same run of lines eight times in a row.
+  A model that loops there makes no tool call, so nothing else stops it before the output limit.
+  One line repeated on its own is not a hit, and neither is a loop with no line break in it.

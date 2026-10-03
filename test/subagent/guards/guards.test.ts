@@ -73,6 +73,18 @@ describe('watchGuards', () => {
         expect(abort).not.toHaveBeenCalled()
     })
 
+    test('a block that repeats while it streams aborts the run', () => {
+        const {session, emit, abort} = fakeSession()
+        const watch = watchGuards(session, settings, 0, fakeClock())
+        emit({
+            type: 'message_update',
+            assistantMessageEvent: {type: 'thinking_delta', delta: 'again\nand again\n'.repeat(8)}
+        } as unknown as AgentSessionEvent)
+
+        expect(watch.hit()?.id).toBe('repeat')
+        expect(abort).toHaveBeenCalledTimes(1)
+    })
+
     test('calls with no id are paired in order, so a hung second call is still caught', () => {
         const {session, emit, abort} = fakeSession()
         const clock = fakeClock()
