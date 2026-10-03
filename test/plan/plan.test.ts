@@ -102,12 +102,13 @@ const select = mock((_title: string, _options: string[]) =>
     Promise.resolve<string | undefined>(stopLabel)
 )
 const notify = mock((_text: string, _level: string) => undefined)
+const setStatus = mock((_key: string, _text: string | undefined) => undefined)
 const entries: {type: string; customType?: string; data?: unknown}[] = []
 const cwd = tempTree({'src/greet.js': 'x', 'README.md': 'x'})
 const ctx = {
     cwd,
     mode: 'tui',
-    ui: {custom, notify, select, theme},
+    ui: {custom, notify, select, setStatus, theme},
     sessionManager: {getBranch: () => entries}
 } as unknown as ExtensionContext & ExtensionCommandContext
 
@@ -134,7 +135,15 @@ const turn = {type: 'turn' as const, text: '', details: {} as never}
 const done = {text: 'DONE', details: {} as never}
 const noSteps = {steps: [], files: []}
 const planned = {steps: ['Fix greet.'], files: [{path: 'src/greet.js', state: 'existing'}]}
-const goalEntry = {request: 'fix', goal: 'Fix the typo.', decisions: [], asked: false, ...noSteps}
+const idleEntry = {accepted: false, decisions: [], asked: false, handed: false, ...noSteps}
+const goalEntry = {
+    request: 'fix',
+    goal: 'Fix the typo.',
+    decisions: [],
+    asked: false,
+    handed: false,
+    ...noSteps
+}
 const tool = (): Tool => subagentSession.mock.calls.at(-1)?.[0].customTools[0] as Tool
 const taskOf = (call: number): string => textOf(prompt.mock.calls.at(call)?.[0] ?? '')
 
@@ -165,7 +174,7 @@ beforeEach(() => {
     panel = undefined
     closed = false
     const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
-    for (const fn of [...fakes, select, setHidden]) fn.mockClear()
+    for (const fn of [...fakes, select, setHidden, setStatus]) fn.mockClear()
     register(pi)
 })
 // A steps run still checking the disk would save into the next test.
@@ -485,7 +494,7 @@ describe('/plan', () => {
         pick(1)
         expect(closed).toBe(true)
         expect(sendUserMessage).toHaveBeenCalledWith('Fix the typo.', {deliverAs: 'followUp'})
-        expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false, ...noSteps})
+        expect(lastEntry()).toEqual(idleEntry)
     })
 
     test('accept runs the questions in the same session, with the tool in it from the start', async () => {
@@ -615,7 +624,7 @@ describe('/plan', () => {
             handOverMessage('Fix the typo.', decisions, stepsReply),
             {deliverAs: 'followUp'}
         )
-        expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false, ...noSteps})
+        expect(lastEntry()).toMatchObject({decisions, handed: true})
     })
 
     test('the tool is refused during the goal turn', async () => {
@@ -1047,15 +1056,188 @@ describe('/plan', () => {
             })
         })
 
-        test('hand over sends the steps after the goal and resets the plan', async () => {
+        test('hand over sends the steps after the goal and keeps the plan as handed', async () => {
             await withSteps()
             panel?.handleInput(enter)
+            await until(() => setStatus.mock.calls.length > 0)
 
             expect(closed).toBe(true)
             expect(sendUserMessage).toHaveBeenCalledWith(`Fix the typo.\n\n${stepsReply}`, {
                 deliverAs: 'followUp'
             })
-            expect(lastEntry()).toEqual({accepted: false, decisions: [], asked: false, ...noSteps})
+            expect(lastEntry()).toEqual({
+                ...goalEntry,
+                accepted: true,
+                asked: true,
+                handed: true,
+                ...planned
+            })
+            expect(setStatus).toHaveBeenLastCalledWith('plan', 'plan: files 0/1')
+        })
+    })
+
+    describe('tracking', () => {
+        const wrote = (...paths: string[]) => ({
+            type: 'message',
+            message: {
+                role: 'assistant',
+                content: paths.map(path => ({type: 'toolCall', name: 'edit', arguments: {path}}))
+            }
+        })
+        const handedEntry = {
+            type: 'custom',
+            customType: 'plan-mode',
+            data: {...goalEntry, accepted: true, asked: true, handed: true, ...planned}
+        }
+        const status = () => setStatus.mock.calls.at(-1)?.[1]
+
+        const written = async (toolName = 'edit') => {
+            const before = setStatus.mock.calls.length
+            handlers.get('tool_execution_end')?.({toolName}, ctx)
+            await until(() => setStatus.mock.calls.length > before)
+        }
+
+        const tracked = async (...after: object[]) => {
+            entries.push(handedEntry, ...(after as typeof entries))
+            handlers.get('session_start')?.({}, ctx)
+            await until(() => setStatus.mock.calls.length > 0)
+        }
+        test('a restored handed plan shows its files in the status', async () => {
+            await tracked(wrote('src/greet.js', 'NOTES.md'))
+
+            expect(setStatus).toHaveBeenLastCalledWith('plan', 'plan: files 1/1 · outside 1')
+        })
+
+        test('a write from before the hand over does not count', async () => {
+            entries.push(wrote('src/greet.js') as never)
+            await tracked()
+
+            expect(status()).toBe('plan: files 0/1')
+        })
+
+        test('the end of an edit or write call counts the new writes', async () => {
+            await tracked()
+            entries.push(wrote('src/greet.js') as never)
+            await written()
+
+            expect(status()).toBe('plan: files 1/1')
+        })
+
+        test('the panel marks steps and files, lists outside files and takes no text', async () => {
+            await tracked(wrote('src/greet.js', 'NOTES.md'))
+            await commands.get('plan')?.handler('', ctx)
+            type('more')
+
+            expect(screen()).toContain('✓ Steps   ✓ Hand over')
+            expect(screen()).toContain('· 1. Fix greet.')
+            expect(screen()).toContain('✓ src/greet.js (existing)')
+            expect(screen()).toContain('OUTSIDE')
+            expect(screen()).toContain('NOTES.md')
+            expect(screen()).toContain('Stop tracking')
+            expect(screen()).not.toContain('Send to main context')
+            expect(screen()).not.toContain('> ')
+        })
+
+        test('an open panel repaints when a write ends', async () => {
+            await tracked()
+            await commands.get('plan')?.handler('', ctx)
+            expect(screen()).toContain('○ src/greet.js (existing)')
+            entries.push(wrote('src/greet.js') as never)
+            await written()
+
+            expect(screen()).toContain('✓ src/greet.js (existing)')
+        })
+
+        test('a write ending while the panel is open keeps the highlighted row', async () => {
+            await tracked()
+            await commands.get('plan')?.handler('', ctx)
+            panel?.handleInput(down)
+            entries.push(wrote('src/greet.js') as never)
+            await written()
+            panel?.handleInput(enter)
+
+            expect(closed).toBe(true)
+            expect(lastEntry()).toBeUndefined()
+        })
+
+        test('another tool ending, or a write with no handed plan, counts nothing', async () => {
+            handlers.get('tool_execution_end')?.({toolName: 'edit'}, ctx)
+            await tracked()
+            entries.push(wrote('src/greet.js') as never)
+            handlers.get('tool_execution_end')?.({toolName: 'read'}, ctx)
+            await settle()
+            await settle()
+
+            expect(setStatus).toHaveBeenCalledTimes(1)
+            expect(status()).toBe('plan: files 0/1')
+        })
+
+        test('Stop tracking saves the idle plan and clears the status', async () => {
+            await tracked(wrote('src/greet.js'))
+            await commands.get('plan')?.handler('', ctx)
+            panel?.handleInput(enter)
+            await settle()
+
+            expect(lastEntry()).toEqual(idleEntry)
+            expect(setStatus).toHaveBeenLastCalledWith('plan', undefined)
+            expect(screen()).toContain('Type what you want done.')
+        })
+
+        test('esc closes the handed panel with no question', async () => {
+            await tracked()
+            await commands.get('plan')?.handler('', ctx)
+            panel?.handleInput(escape)
+
+            expect(closed).toBe(true)
+            expect(select).not.toHaveBeenCalled()
+        })
+
+        test('a tree move to a branch with no handed plan clears the status', async () => {
+            await tracked(wrote('src/greet.js'))
+            entries.length = 0
+            handlers.get('session_tree')?.({}, ctx)
+            await settle()
+
+            expect(setStatus).toHaveBeenLastCalledWith('plan', undefined)
+        })
+
+        test('text after the command ends the tracking', async () => {
+            await tracked(wrote('src/greet.js'))
+            await commands.get('plan')?.handler('fix the greeting', ctx)
+            await settle()
+
+            expect(setStatus).toHaveBeenLastCalledWith('plan', undefined)
+            expect(lastEntry()).toMatchObject({request: 'fix the greeting', handed: false})
+        })
+
+        test('a slower older count does not replace a newer one', async () => {
+            await tracked()
+            entries.push(wrote('src/greet.js') as never)
+            handlers.get('session_start')?.({}, ctx)
+            entries.length = 0
+            handlers.get('session_tree')?.({}, ctx)
+            await settle()
+            await settle()
+
+            expect(setStatus).toHaveBeenLastCalledWith('plan', undefined)
+        })
+
+        test('a context that went stale while counting is dropped without an error', async () => {
+            await tracked()
+            setStatus.mockImplementationOnce(() => {
+                throw new Error('stale')
+            })
+
+            expect(await written()).toBeUndefined()
+        })
+
+        test('a plan handed over with no steps is not tracked', async () => {
+            await openWithGoal()
+            pick(1)
+            await settle()
+
+            expect(lastEntry()).toEqual(idleEntry)
+            expect(setStatus).toHaveBeenLastCalledWith('plan', undefined)
         })
     })
 

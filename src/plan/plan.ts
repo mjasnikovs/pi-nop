@@ -19,8 +19,11 @@ import {PlanPanel} from './panel'
 import type {PanelActions, PanelState} from './panel'
 import {parseSteps, sendBackSteps, stepsTask, stepsText} from './steps'
 import type {Steps} from './steps'
+import {progress, statusText, writes, writeTools} from './track'
+import type {Progress} from './track'
 
 const entryType = 'plan-mode'
+const statusKey = 'plan'
 const title = 'PLAN'
 const noGoalLine = 'The subagent gave no GOAL line. Send your text again or reword it.'
 const noStepsLine = 'The subagent gave no steps that pass the checks.'
@@ -38,6 +41,8 @@ type PlanState = Steps & {
     decisions: Decision[]
     /** The questions step ran to its end or the user finished it. */
     asked: boolean
+    /** The plan went to the main agent and its files are tracked. */
+    handed: boolean
 }
 
 type Run = {
@@ -50,7 +55,14 @@ type Run = {
     waiting?: {question: Question; answer: (text: string) => void}
 }
 
-const idle: PlanState = {accepted: false, decisions: [], asked: false, steps: [], files: []}
+const idle: PlanState = {
+    accepted: false,
+    decisions: [],
+    asked: false,
+    handed: false,
+    steps: [],
+    files: []
+}
 
 // The goal prompt allows no text before the answer, so tool turns report only their count.
 const runStatus = (text: string, turns: number): string => {
@@ -62,13 +74,13 @@ const isPlanEntry = (entry: SessionEntry): entry is CustomEntry<PlanState> =>
     entry.type === 'custom' && entry.customType === entryType
 
 // An entry saved before a later step was built lacks that step's fields.
-const lastState = (ctx: ExtensionContext): PlanState => {
-    const saved = ctx.sessionManager
-        .getBranch()
-        .filter(isPlanEntry)
-        .findLast(entry => entry.data !== undefined)?.data
+const lastPlan = (ctx: ExtensionContext): {state: PlanState; after: SessionEntry[]} => {
+    const branch = ctx.sessionManager.getBranch()
+    const at = branch.findLastIndex(entry => isPlanEntry(entry) && entry.data !== undefined)
+    const saved = branch[at]
 
-    return saved === undefined ? idle : {...idle, ...saved}
+    if (saved === undefined || !isPlanEntry(saved)) return {state: idle, after: []}
+    return {state: {...idle, ...saved.data}, after: branch.slice(at + 1)}
 }
 
 export default function (pi: ExtensionAPI) {
@@ -77,6 +89,8 @@ export default function (pi: ExtensionAPI) {
     let error: string | undefined
     let subagent: {session: SubagentSession; knowsGoal: boolean} | undefined
     let repaint: (() => void) | undefined
+    let tracked: Progress | undefined
+    let trackRuns = 0
 
     // The only place panel state comes from, so a new field cannot miss a copy.
     const panelState = (): PanelState => ({
@@ -87,6 +101,8 @@ export default function (pi: ExtensionAPI) {
         decisions: state.decisions,
         steps: state.steps,
         files: state.files,
+        handed: state.handed,
+        progress: tracked,
         question: running?.waiting?.question,
         running: running !== undefined && running.waiting === undefined,
         status: running?.status ?? '',
@@ -96,6 +112,25 @@ export default function (pi: ExtensionAPI) {
     const save = (next: PlanState): void => {
         state = next
         pi.appendEntry(entryType, state)
+    }
+
+    const track = async (ctx: ExtensionContext): Promise<void> => {
+        trackRuns += 1
+        const run = trackRuns
+        const next =
+            state.handed ? await progress(ctx.cwd, state, writes(lastPlan(ctx).after)) : undefined
+
+        if (run !== trackRuns) return
+        tracked = next
+
+        // A reload or a new session while the paths resolved leaves a ctx that throws.
+        try {
+            ctx.ui.setStatus(statusKey, next === undefined ? undefined : statusText(next))
+        } catch {
+            return
+        }
+
+        repaint?.()
     }
 
     const stopRun = (): void => {
@@ -322,12 +357,20 @@ export default function (pi: ExtensionAPI) {
                         const {goal, decisions} = state
                         const message = handOverMessage(goal ?? '', decisions, stepsText(state))
                         done()
-                        save(idle)
+                        save(state.steps.length > 0 ? {...state, handed: true} : idle)
                         // Without deliverAs pi refuses a message while the main agent is busy.
                         if (goal !== undefined) pi.sendUserMessage(message, {deliverAs: 'followUp'})
+                        void track(ctx)
+                    },
+                    stop: () => {
+                        save(idle)
+                        void track(ctx)
                     },
                     close: () => done(),
-                    leave: () => void askClose(done)
+                    leave: () => {
+                        if (state.handed) done()
+                        else void askClose(done)
+                    }
                 }
                 const panel = new PlanPanel(
                     theme,
@@ -372,7 +415,12 @@ export default function (pi: ExtensionAPI) {
             }
 
             const text = args.trim()
-            if (text !== '' && state !== idle) save(idle)
+
+            if (text !== '' && state !== idle) {
+                save(idle)
+                void track(ctx)
+            }
+
             // Not awaited: a reload drops the overlay unsettled, and a waiting handler blocks pi.
             open(ctx).catch((failure: unknown) => {
                 closeSubagent()
@@ -383,10 +431,15 @@ export default function (pi: ExtensionAPI) {
     })
 
     const restore = (_event: unknown, ctx: ExtensionContext): void => {
-        state = lastState(ctx)
+        state = lastPlan(ctx).state
+        void track(ctx)
     }
     pi.on('session_start', restore)
     pi.on('session_tree', restore)
+    // Not turn_end: pi rebuilds the whole context for a turn_end handler, in every session.
+    pi.on('tool_execution_end', ({toolName}, ctx) => {
+        if (state.handed && writeTools.has(toolName)) void track(ctx)
+    })
     pi.on('session_shutdown', closeSubagent)
 }
 

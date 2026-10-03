@@ -43,3 +43,11 @@ turn.
 - **repeat**: one thinking or answer block ends on the same run of lines eight times in a row.
   A model that loops there makes no tool call, so nothing else stops it before the output limit.
   One line repeated on its own is not a hit, and neither is a loop with no line break in it.
+
+## Plan tracking
+
+After hand over of a plan with steps `/plan` tracks it. The footer shows `plan: files 3/4 · outside
+1`: how many of the plan's files the main agent called `edit` or `write` on, and how many other
+files. `/plan` opens the plan with a mark on each file and step. A step is done when every plan file
+it names was written, and has a dot when it names none. "Stop tracking" or a new plan ends it. A
+write through bash or inside a codemode script is not seen.

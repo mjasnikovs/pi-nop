@@ -39,8 +39,21 @@ const ask = mock((_text: string) => undefined)
 const plan = mock((_text: string) => undefined)
 const finish = mock((_text: string) => undefined)
 const changeGoal = mock((_text: string) => undefined)
+const stop = mock((_text: string) => undefined)
 const repaint = mock(() => undefined)
-const actions = {change, accept, answer, ask, plan, finish, changeGoal, handOver, close, leave}
+const actions = {
+    change,
+    accept,
+    answer,
+    ask,
+    plan,
+    finish,
+    changeGoal,
+    handOver,
+    stop,
+    close,
+    leave
+}
 const question = {
     question: 'Which greeting?',
     options: ['Hello, ${name}!', 'A long\nfriendly \x1b[31mgreeting\x1b[0m'],
@@ -50,6 +63,7 @@ const asking = {goal: 'Fix the typo.', accepted: true, question}
 const state = (over: Partial<PanelState> = {}): PanelState => ({
     accepted: false,
     asked: false,
+    handed: false,
     decisions: [],
     steps: [],
     files: [],
@@ -298,6 +312,89 @@ describe('PlanPanel', () => {
             expect(
                 panel.render(width).filter(line => line.includes('word')).length
             ).toBeGreaterThan(1)
+        })
+
+        describe('after hand over', () => {
+            const progress = {
+                files: [true, false],
+                steps: ['done', 'open', 'untracked'] as const,
+                outside: ['NOTES.md'],
+                written: 1,
+                total: 2
+            }
+            const handed = state({
+                ...planned,
+                steps: ['Fix greet.', 'Add a test.', 'Run the tests.'],
+                handed: true,
+                progress: {...progress, steps: [...progress.steps]}
+            })
+            const text = () => panel.render(width).join('\n')
+            test('every strip item is done', () => {
+                panel.setState(handed)
+
+                expect(panel.render(width)[0]).toBe('✓ Goal   ✓ Questions   ✓ Steps   ✓ Hand over')
+            })
+
+            test('each step and file carries its mark, and outside files are listed', () => {
+                panel.setState(handed)
+
+                expect(text()).toContain('✓ 1. Fix greet.\n○ 2. Add a test.\n· 3. Run the tests.')
+                expect(text()).toContain('FILES\n✓ src/greet.js (existing)\n○ ')
+                expect(text()).toContain('OUTSIDE\nNOTES.md')
+            })
+
+            test('no outside file, no outside heading', () => {
+                panel.setState({...handed, progress: {...progress, steps: [], outside: []}})
+
+                expect(text()).not.toContain('OUTSIDE')
+            })
+
+            test('a plan with no files still shows its outside files, listed or counted', () => {
+                const bare = {...handed, files: [], progress: {...progress, steps: [], files: []}}
+                panel.setState(bare)
+                const full = panel.render(width).length
+                expect(text()).toContain('OUTSIDE\nNOTES.md')
+                expect(text()).not.toContain('FILES')
+                limit = full - 2
+
+                expect(text()).toContain('3. Run the tests.\n\nOutside: 1\n')
+                panel.setState({...bare, progress: {...bare.progress, outside: []}})
+                limit = panel.render(width).length - 1
+
+                expect(text()).toContain('3. Run the tests.\n\n→')
+            })
+
+            test('the rows stop the tracking or close, and typed text goes nowhere', () => {
+                panel.setState(handed)
+                type(panel, 'more')
+                panel.handleInput(enter)
+
+                expect(text()).toContain(`→ <${rows.stop.label}>\n  ${rows.close.label}`)
+                expect(text()).not.toContain(rows.handOver.label)
+                expect(text()).not.toContain('> ')
+                expect(stop).toHaveBeenCalledTimes(1)
+                expect(change).not.toHaveBeenCalled()
+            })
+
+            test('before the first count the plan shows with no marks', () => {
+                panel.setState({...handed, progress: undefined})
+
+                expect(text()).toContain('STEPS\n1. Fix greet.')
+                expect(text()).toContain('FILES\nsrc/greet.js (existing)')
+            })
+
+            test('a short screen turns files and outside into counts, then the steps', () => {
+                panel.setState(handed)
+                const full = panel.render(width).length
+                limit = full - 3
+
+                expect(text()).toContain('· 3. Run the tests.\n\nFiles: 1/2\nOutside: 1\n')
+                expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+                limit = full - 9
+
+                expect(text()).toContain('Steps: 3 · done 1\nFiles: 1/2\nOutside: 1\n')
+                expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+            })
         })
 
         describe('on a screen that is too short', () => {
@@ -591,6 +688,37 @@ describe('PlanPanel', () => {
             expect(lines).toContain('→ <Plan steps>')
             expect(lines.length).toBeLessThanOrEqual(limit)
         })
+    })
+
+    test('a repaint with the same rows keeps the highlight', () => {
+        const waiting = state({goal: 'Fix the typo.', accepted: true, asked: true})
+        panel.setState(waiting)
+        panel.handleInput(down)
+        panel.setState({...waiting})
+        panel.handleInput(enter)
+
+        expect(handOver).toHaveBeenCalledTimes(1)
+        expect(plan).not.toHaveBeenCalled()
+    })
+
+    test('other rows, even as many, put the highlight back', () => {
+        const goal = {goal: 'Fix the typo.'}
+        panel.setState(state({...goal, accepted: true, asked: true, steps: ['Fix greet.']}))
+        panel.handleInput(down)
+        panel.setState(state(goal))
+        panel.handleInput(enter)
+
+        expect(accept).toHaveBeenCalledTimes(1)
+        expect(handOver).not.toHaveBeenCalled()
+    })
+
+    test('a new question with as many options puts the highlight back', () => {
+        panel.setState(state(asking))
+        panel.handleInput(down)
+        panel.setState(state({...asking, question: {...question}}))
+        panel.handleInput(enter)
+
+        expect(answer).toHaveBeenCalledWith(question.options[0])
     })
 
     test('text typed for a question that left the screen is dropped, not sent as a change', () => {

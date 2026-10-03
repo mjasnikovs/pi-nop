@@ -739,3 +739,128 @@ is still lost. An Enter pressed as a run ends lands on "Send to main context".
 
 Not measured: a path outside cwd, which is not refused. A cap on step count or line length. The
 panel on a plan longer than the screen shows counts, seen at 20 rows in tmux.
+
+## 13. Execution tracking, measured
+
+Built 2026-10-03 on pi 1.0.0. Hand over of a plan with steps keeps the plan, saved with
+`handed: true`. From then on the footer shows `plan: files 3/4 · outside 1`, and `/plan` opens the
+plan with marks. No tool, no marker, no git, and the hand-over text is unchanged.
+
+The tracker (`src/plan/track.ts`) reads the session branch after the handed entry. It takes the
+`path` of every `edit` and `write` call of the main agent, failed calls too, and resolves each as
+the plan's file check does, through pi's read tool. A FILES row is written or not. A written path
+that is no FILES row is outside. A step is done when every FILES path its text names was written,
+open when one was not, and not tracked when it names none. A path counts as named only whole, not
+inside a longer path. The count runs at hand over, when an `edit` or `write` call ends, on
+`session_start` and on `session_tree`. Nothing but the plan is saved. "Stop tracking" in the panel,
+or a new plan, ends it.
+
+Harness: `harness/track/`, runs in `harness/runs/track/`. The main model gets the hand-over message
+as its first prompt, default tools, a fresh git copy of the fixture. Plan P4: 4 steps, 4 files, one
+a new README. Plan PR: 5 steps, 3 files, two steps on `src/cli.js`, the last step "Run npm test".
+Arm N is the shipped message. Arm T adds a `step_done` tool and "Call step_done after each step.".
+Arm D adds "After completing a step, include a [DONE:n] tag in your response.".
+
+Gemma 4 12B, 30 sessions per cell:
+
+| Check | N, PR | T, PR | D, PR | N, P4 | T, P4 | D, P4 |
+|---|---|---|---|---|---|---|
+| `edit` and `write` call paths equal `git status` | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 |
+| Plan files changed, no other | 30/30 | 29/30 | 28/30 | 30/30 | 30/30 | 30/30 |
+| Tests pass | 30/30 | 29/30 | 27/30 | 24/30 | 21/30 | 22/30 |
+| File rule: final marks right, steps that name a file | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 |
+| File rule: a step shown done before it was, mid-run | 4/30 | 3/30 | 1/30 | 0/30 | 0/30 | 0/30 |
+| Model marked every step | | 24/30 | 18/30 | | 30/30 | 22/30 |
+| Model marked no step | | 3/30 | 5/30 | | 0/30 | 3/30 |
+| Median prompt tokens per session | 43.9k | 73.9k | 40.2k | 38.9k | 46.5k | 29.5k |
+
+Qwen 3.8 27B, 10 sessions per cell: call paths equal git 60/60, plan files exact 60/60, tests
+60/60, `step_done` for every step 20/20, `[DONE:n]` for every step 20/20, no early mark. With
+`step_done` the PR plan took 27.4k prompt tokens and 22.5 s against 12.2k and 13 s.
+
+So the calls are the tracker. They matched git in 240 of 240 sessions and cost nothing. The model's
+own marks were complete in 54 of 60 Gemma sessions with the tool and 40 of 60 with text. Three
+Gemma sessions were killed at the run limit, one hung with the server idle and two ran away in one
+turn. The main model has no guards.
+
+Counting failed calls: 32 `edit` calls failed in the 240 sessions, each retried on the same file,
+so the set with failed calls also equals git 240/240. pi's compaction file list counts calls the
+same way. An `edit` or `write` aborted after it reached the disk returns an error with the file
+changed (`edit.js`, `write.js`).
+
+Bash: 597 calls, one write, Gemma `cat <<EOF > src/greet.js`. That file was also edited.
+
+A tool in the main context, `harness/track/cache-run.ts`, Qwen, 2 sessions per arm, pi's usage
+numbers: with the tool list fixed every request read the whole earlier prompt from the cache.
+With `step_done` added at hand over the next request read 0 cached tokens, 2/2. Taking it out after
+the plan cost the cache a second time, 2/2. With the tool in the list from the start nothing
+reset, and the prompt grew by about 60 tokens.
+
+Git, tried on a scratch repo: `git status --porcelain` gives paths from the repo root, not from
+cwd. A second change to a file that was dirty before shows no difference. A file the agent commits
+leaves the list. `git diff` against a `git stash create` snapshot sees the first two, but not an
+untracked file. No git gives exit code 128. None of this is needed with the calls.
+
+Steps and files in 823 logged plans (`harness/track/links.py` and a second count by a reviewer):
+
+| | Gemma fixture | Gemma real repo | Qwen fixture | Qwen real repo |
+|---|---|---|---|---|
+| Steps that name a FILES path | 1638/1657 | 28/35 | 370/485 | 55/65 |
+| FILES rows no step names | 4/1334 | 3/19 | 15/363 | 12/71 |
+| Steps on a file another step names | 624/1657 | 22/35 | 51/485 | 12/65 |
+
+The rest of the Qwen fixture steps are "Run npm test". On the real repo the unnamed steps say
+`plan.ts` or name a function. Whole-path matching links the same 2091 of 2242 steps as a plain
+substring, and drops one false link, `src/greet.js` inside `../src/greet.js`. So files are exact
+and step marks are a reading of them. That is why the footer counts files.
+
+Where it shows: a pi widget made of lines is cut at 10 (`MAX_WIDGET_LINES`), and real plans had 5
+to 9 steps and 5 to 8 files. So the footer has the count and the panel has the list. On a short
+screen files and outside become counts, then the steps.
+
+pi facts used: when `tool_execution_end` fires the call is on the branch, 6/6 in a probe. A
+`turn_end` handler makes pi rebuild the context at every turn of every session, so it is not used.
+`getBranch()` keeps entries from before a compaction. A reload clears every status and then fires
+`session_start`. pi exports no path resolver. A nested `createAgentSession` does not fire the main
+session's events.
+
+Shipped code in the real TUI through tmux, fixture repo, each seen once. Gemma: plan, hand over,
+footer 0/3, 1/3, 3/3, `/plan` with four steps and three files marked, Esc closed it with no
+question, a written NOTES.md gave `outside 1`, the same footer after `/reload`, a write aborted
+while its arguments streamed was not counted and was not on disk, "Stop tracking" cleared the
+footer and the panel was empty. Qwen: the same to 3/3, a `/tree` move to the hand-over message gave
+0/3 with the files still changed on disk, and a fork from there kept 0/3.
+
+A review by a second model found one bug: the count repaints the panel, and a
+repaint put the highlight back on the first row, so Enter after a count picked "Stop tracking" or
+the first answer. The panel now keeps the highlight when the rows and the question are the same.
+
+A second review found the `turn_end` cost above and that every call was resolved again when a path
+repeated. Both fixed. A third found that a plan with no FILES rows hid its outside files in the
+panel. Fixed. A fourth showed that calls made inside a codemode script cannot be counted when they
+happen: pi saves them on the script's result after every event a count could run on, and drops the
+path of a call over 8 KB. So they are not read. A fifth found no fault in the code and four untested
+lines, now tested. After the change to `tool_execution_end` the flow ran once more on Qwen in the
+real TUI: footer 0/2, 2/2, and 2/2 after `/reload`.
+
+Tests: `test/plan/track.test.ts` and new cases in the plan and panel tests. 63 mutants, 63 killed
+(`harness/track/mutate.py`).
+
+Left as is:
+
+- A write through bash, inside a codemode script, through another extension's tool, or by a `!`
+  command is not seen.
+- A step that shares a file with another shows done at the first write.
+- A step that only runs or checks a file gets its mark from that file. Seen in the Qwen product
+  run: "Run the test suite and a manual `node src/cli.js farewell Alice`" showed done.
+- A step that names no file only ever shows a dot, and a FILES row no step names marks no step.
+- A failed `edit` on a file never written would show it written. 0 in 240.
+- Edits a busy main agent makes before the queued hand over arrives count.
+- After a `/tree` move the footer follows the branch, not the disk.
+- A step that writes `./src/a.js` for the FILES row `src/a.js` gets no mark.
+- A symlinked path does not match its target. A `new` row that is a directory stays open.
+- Tracking has no end of its own, so later edits in the session count as outside.
+
+Not measured: the main model on a real repo, a plan longer than the screen in the handed panel,
+the footer beside other statuses on a narrow screen.
+

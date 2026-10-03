@@ -15,7 +15,8 @@ import type {Focusable} from '../config/box'
 import {oneLine} from '../subagent/subagentTui'
 import {formatElapsed, Spinner, spinnerFrames} from '../tui/spinner'
 import type {Decision, Question} from './ask'
-import type {PlanFile, Steps} from './steps'
+import type {Steps} from './steps'
+import type {Progress, StepMark} from './track'
 
 const steps = ['Goal', 'Questions', 'Steps', 'Hand over'] as const
 const escapeKey = Key.escape
@@ -29,6 +30,8 @@ type PanelState = Steps & {
     accepted: boolean
     asked: boolean
     decisions: Decision[]
+    handed: boolean
+    progress?: Progress
     question?: Question
     running: boolean
     status: string
@@ -44,6 +47,7 @@ type Action =
     | 'finish'
     | 'changeGoal'
     | 'handOver'
+    | 'stop'
     | 'close'
     | 'leave'
 type PanelActions = Record<Action, (text: string) => void>
@@ -57,6 +61,7 @@ const rows = {
     finish: row('finish', 'Finish questions'),
     changeGoal: row('changeGoal', 'Change goal'),
     handOver: row('handOver', 'Send to main context'),
+    stop: row('stop', 'Stop tracking'),
     close: row('close', 'Close')
 }
 
@@ -73,6 +78,7 @@ const optionRows = (question: Question): Row[] =>
 
 const menuFor = (state: PanelState): Row[] => {
     if (state.running || state.goal === undefined) return []
+    if (state.handed) return [rows.stop, rows.close]
     if (state.question !== undefined)
         return [...optionRows(state.question), rows.finish, rows.changeGoal, rows.close]
     if (!state.accepted) return [rows.accept, rows.handOver, rows.close]
@@ -80,6 +86,9 @@ const menuFor = (state: PanelState): Row[] => {
     if (state.steps.length === 0) return [rows.plan, rows.handOver, rows.changeGoal, rows.close]
     return [rows.handOver, rows.changeGoal, rows.close]
 }
+
+const sameRows = (left: Row[], right: Row[]): boolean =>
+    left.length === right.length && left.every((item, index) => item.value === right[index]?.value)
 
 // A list that scrolls shows at least one row and pi-tui's position line under it.
 const scrolling = 2
@@ -95,9 +104,12 @@ const sharedInOrder = (room: number, lists: string[][]): string[][] => {
 }
 
 const takesText = (state: PanelState): boolean =>
-    !state.running && (!state.accepted || state.question !== undefined || state.steps.length > 0)
+    !state.running
+    && !state.handed
+    && (!state.accepted || state.question !== undefined || state.steps.length > 0)
 
 const currentStep = (state: PanelState): number => {
+    if (state.handed) return steps.length
     if (!state.accepted) return steps.indexOf('Goal')
     if (!state.asked) return steps.indexOf('Questions')
     if (state.running || state.steps.length === 0) return steps.indexOf('Steps')
@@ -180,36 +192,87 @@ const body = (theme: Theme, state: PanelState, width: number, compact: Compact):
     ]
 }
 
-const fileCount = (files: PlanFile[]): string[] =>
-    files.length === 0 ? [] : [`Files: ${String(files.length)}`]
+type Planned = Steps & {progress?: Progress}
 
-const fileRows = (theme: Theme, files: PlanFile[], width: number, counted: boolean): string[] => {
-    if (files.length === 0) return []
-    if (counted) return ['', ...fileCount(files)]
+const stepMarks = (theme: Theme): Record<StepMark, string> => ({
+    done: theme.fg('success', '✓ '),
+    open: theme.fg('dim', '○ '),
+    untracked: theme.fg('dim', '· ')
+})
+
+const fileMark = (theme: Theme, written: boolean | undefined): string => {
+    if (written === undefined) return ''
+    return stepMarks(theme)[written ? 'done' : 'open']
+}
+
+const outsideCount = (outside: string[]): string[] =>
+    outside.length === 0 ? [] : [`Outside: ${String(outside.length)}`]
+
+const fileCount = ({files, progress}: Planned): string[] => {
+    const outside = outsideCount(progress?.outside ?? [])
+
+    if (files.length === 0) return outside
+    if (progress === undefined) return [`Files: ${String(files.length)}`]
+    return [`Files: ${String(progress.written)}/${String(progress.total)}`, ...outside]
+}
+
+const outsideRows = (theme: Theme, outside: string[], width: number): string[] => {
+    if (outside.length === 0) return []
+    return [
+        '',
+        theme.fg('accent', theme.bold('OUTSIDE')),
+        ...outside.flatMap(path => wrapTextWithAnsi(shown(path), width))
+    ]
+}
+
+const fileList = (theme: Theme, plan: Planned, width: number): string[] => {
+    if (plan.files.length === 0) return []
     return [
         '',
         theme.fg('accent', theme.bold('FILES')),
-        ...files.flatMap(({path, state}) =>
-            wrapTextWithAnsi(`${shown(path)} ${theme.fg('dim', `(${state})`)}`, width)
+        ...plan.files.flatMap(({path, state}, index) =>
+            wrapTextWithAnsi(
+                `${fileMark(theme, plan.progress?.files[index])}${shown(path)} ${theme.fg('dim', `(${state})`)}`,
+                width
+            )
         )
     ]
 }
 
-const stepRows = (planSteps: string[], width: number, short: boolean): string[] =>
-    planSteps.flatMap((step, index) => {
-        const text = numbered(shown(step), index)
+const fileRows = (theme: Theme, plan: Planned, width: number, counted: boolean): string[] => {
+    const counts = fileCount(plan)
+
+    if (counted) return counts.length === 0 ? [] : ['', ...counts]
+    return [
+        ...fileList(theme, plan, width),
+        ...outsideRows(theme, plan.progress?.outside ?? [], width)
+    ]
+}
+
+const stepRows = (theme: Theme, plan: Planned, width: number, short: boolean): string[] =>
+    plan.steps.flatMap((step, index) => {
+        const mark = plan.progress?.steps[index]
+        const text =
+            (mark === undefined ? '' : stepMarks(theme)[mark]) + numbered(shown(step), index)
 
         return short ? [truncateToWidth(oneLine(text), width, '…')] : wrapTextWithAnsi(text, width)
     })
 
-const planned = (theme: Theme, plan: Steps, width: number, compact: Compact): string[] => {
+const stepCount = ({steps: planSteps, progress}: Planned): string => {
+    const count = `Steps: ${String(planSteps.length)}`
+
+    if (progress === undefined) return count
+    return `${count} · done ${String(progress.steps.filter(mark => mark === 'done').length)}`
+}
+
+const planned = (theme: Theme, plan: Planned, width: number, compact: Compact): string[] => {
     if (plan.steps.length === 0) return []
-    if (compact.stepCount) return [`Steps: ${String(plan.steps.length)}`, ...fileCount(plan.files)]
+    if (compact.stepCount) return [stepCount(plan), ...fileCount(plan)]
     return [
         '',
         theme.fg('accent', theme.bold('STEPS')),
-        ...stepRows(plan.steps, width, compact.steps),
-        ...fileRows(theme, plan.files, width, compact.files)
+        ...stepRows(theme, plan, width, compact.steps),
+        ...fileRows(theme, plan, width, compact.files)
     ]
 }
 
@@ -274,6 +337,7 @@ class PlanPanel implements Focusable {
     private state: PanelState = {
         accepted: false,
         asked: false,
+        handed: false,
         decisions: [],
         steps: [],
         files: [],
@@ -302,9 +366,14 @@ class PlanPanel implements Focusable {
 
         // Text typed for a question that left the screen must not turn into a goal change.
         if (!takesText(state) || state.question !== this.state.question) this.input.setValue('')
+        // A repaint with the same rows must not move the highlight: Enter would pick another row.
+        if (
+            !sameRows(menuFor(state), menuFor(this.state))
+            || state.question !== this.state.question
+        )
+            this.selected = 0
 
         this.state = state
-        this.selected = 0
     }
 
     render(width: number): string[] {
