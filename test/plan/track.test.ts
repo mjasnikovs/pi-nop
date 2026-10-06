@@ -1,10 +1,11 @@
 import {describe, expect, test} from 'bun:test'
+import {utimesSync} from 'node:fs'
 import {join} from 'node:path'
 import type {SessionEntry} from '@earendil-works/pi-coding-agent'
 
 import type {Steps} from '../../src/plan/steps'
-import {names, progress, statusText, writes} from '../../src/plan/track'
-import {tempTree} from '../tree'
+import {names, progress, stamps, statusText, writes} from '../../src/plan/track'
+import {tempTree, writeTree} from '../tree'
 
 const call = (name: string, args: object) => ({type: 'toolCall', id: name, name, arguments: args})
 const said = (role: string, ...content: object[]): SessionEntry =>
@@ -19,7 +20,8 @@ const plan: Steps = {
     files: [
         {path: 'src/greet.js', state: 'existing'},
         {path: 'src/cli.js', state: 'existing'}
-    ]
+    ],
+    verify: []
 }
 describe('writes', () => {
     test('gives the path of every edit and write call, in order', () => {
@@ -112,12 +114,108 @@ describe('progress', () => {
             files: [
                 {path: 'src/greet.js', state: 'existing'},
                 {path: './src/greet.js', state: 'existing'}
-            ]
+            ],
+            verify: []
         }
         expect(await progress(cwd, twice, ['src/greet.js'])).toMatchObject({
             files: [true, true],
             written: 1,
             total: 1
+        })
+    })
+
+    describe('a folder row', () => {
+        const folders: Steps = {
+            steps: ['Add the routes under src/routes/.', 'Add src/web pages.'],
+            files: [
+                {path: 'src/routes/', state: 'new'},
+                {path: 'src/web', state: 'new'},
+                {path: 'src/greet.js', state: 'existing'}
+            ],
+            verify: []
+        }
+        test('is written once a file inside it is, with or without its slash', async () => {
+            const calls = ['src/routes/listings.ts', 'src/web/pages/login.tsx']
+            expect(await progress(cwd, folders, calls)).toEqual({
+                files: [true, true, false],
+                steps: ['done', 'done'],
+                outside: [],
+                written: 2,
+                total: 3
+            })
+        })
+
+        test('is open while only its neighbours are written', async () => {
+            const calls = ['src/routes.ts', 'src/webhooks/a.ts', 'src/greet.js']
+            expect(await progress(cwd, folders, calls)).toMatchObject({
+                files: [false, false, true],
+                outside: ['src/routes.ts', 'src/webhooks/a.ts'],
+                written: 1
+            })
+        })
+    })
+})
+
+describe('a file changed on disk since hand over', () => {
+    const build: Steps = {
+        steps: ['Run bun add in package.json.', 'Add dist/out.js.'],
+        files: [
+            {path: 'package.json', state: 'existing'},
+            {path: 'dist/out.js', state: 'new'},
+            {path: 'src/greet.js', state: 'existing'}
+        ],
+        verify: []
+    }
+
+    const handed = async () => {
+        const root = tempTree({'package.json': '{}', 'src/greet.js': 'x'})
+        return {root, disk: await stamps(root, build)}
+    }
+    test('stamps gives one per row, empty for a file not on disk', async () => {
+        const {disk} = await handed()
+        expect(disk.map(text => text.replace(/^[\d.]+:/, 'time:'))).toEqual([
+            'time:2',
+            '',
+            'time:1'
+        ])
+    })
+
+    test('counts with no call, a rewritten file and a new one', async () => {
+        const {root, disk} = await handed()
+        writeTree(root, {'package.json': '{"a":1}', 'dist/out.js': 'x'})
+
+        expect(await progress(root, build, [], disk)).toEqual({
+            files: [true, true, false],
+            steps: ['done', 'done'],
+            outside: [],
+            written: 2,
+            total: 3
+        })
+    })
+
+    test('counts a rewrite of the same size by its time', async () => {
+        const {root, disk} = await handed()
+        utimesSync(join(root, 'package.json'), 1, 1)
+
+        expect(await progress(root, build, [], disk)).toMatchObject({files: [true, false, false]})
+    })
+
+    test('counts nothing while the disk is as handed', async () => {
+        const {root, disk} = await handed()
+        expect(await progress(root, build, [], disk)).toMatchObject({written: 0})
+    })
+
+    test('counts nothing for a plan handed over with no stamps', async () => {
+        const {root} = await handed()
+        writeTree(root, {'package.json': '{"a":1}', 'dist/out.js': 'x'})
+
+        expect(await progress(root, build, [])).toMatchObject({files: [false, false, false]})
+    })
+
+    test('a call still counts beside the stamps', async () => {
+        const {root, disk} = await handed()
+        expect(await progress(root, build, ['src/greet.js'], disk)).toMatchObject({
+            files: [false, false, true]
         })
     })
 })

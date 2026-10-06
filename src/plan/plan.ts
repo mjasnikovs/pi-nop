@@ -19,7 +19,7 @@ import {PlanPanel} from './panel'
 import type {PanelActions, PanelState} from './panel'
 import {parseSteps, sendBackSteps, stepsTask, stepsText} from './steps'
 import type {Steps} from './steps'
-import {progress, statusText, writes, writeTools} from './track'
+import {diskTools, progress, stamps, statusText, writes} from './track'
 import type {Progress} from './track'
 
 const entryType = 'plan-mode'
@@ -43,6 +43,8 @@ type PlanState = Steps & {
     asked: boolean
     /** The plan went to the main agent and its files are tracked. */
     handed: boolean
+    /** What each FILES row was on disk at hand over. */
+    disk?: string[]
 }
 
 type Run = {
@@ -61,7 +63,8 @@ const idle: PlanState = {
     asked: false,
     handed: false,
     steps: [],
-    files: []
+    files: [],
+    verify: []
 }
 
 // The goal prompt allows no text before the answer, so tool turns report only their count.
@@ -90,17 +93,20 @@ export default function (pi: ExtensionAPI) {
     let subagent: {session: SubagentSession; knowsGoal: boolean} | undefined
     let repaint: (() => void) | undefined
     let tracked: Progress | undefined
+    /** The request of the last failed run. Try again sends it when no goal came back. */
+    let failedRequest: string | undefined
     let trackRuns = 0
 
     // The only place panel state comes from, so a new field cannot miss a copy.
     const panelState = (): PanelState => ({
-        request: state.request ?? running?.request,
+        request: state.request ?? running?.request ?? failedRequest,
         goal: state.goal,
         accepted: state.accepted,
         asked: state.asked,
         decisions: state.decisions,
         steps: state.steps,
         files: state.files,
+        verify: state.verify,
         handed: state.handed,
         progress: tracked,
         question: running?.waiting?.question,
@@ -118,7 +124,9 @@ export default function (pi: ExtensionAPI) {
         trackRuns += 1
         const run = trackRuns
         const next =
-            state.handed ? await progress(ctx.cwd, state, writes(lastPlan(ctx).after)) : undefined
+            state.handed ?
+                await progress(ctx.cwd, state, writes(lastPlan(ctx).after), state.disk)
+            :   undefined
 
         if (run !== trackRuns) return
         tracked = next
@@ -131,6 +139,27 @@ export default function (pi: ExtensionAPI) {
         }
 
         repaint?.()
+    }
+
+    const handOver = async (ctx: ExtensionContext): Promise<void> => {
+        const plan = state
+        const {goal, decisions} = plan
+        const message = handOverMessage(goal ?? '', decisions, stepsText(plan))
+        const disk = await stamps(ctx.cwd, plan)
+
+        // A new request or a tree move while the stamps were read replaced this plan.
+        if (state !== plan) return
+
+        // A reload while the stamps were read leaves a pi that throws.
+        try {
+            save(plan.steps.length > 0 ? {...plan, handed: true, disk} : idle)
+            // Without deliverAs pi refuses a message while the main agent is busy.
+            if (goal !== undefined) pi.sendUserMessage(message, {deliverAs: 'followUp'})
+        } catch {
+            return
+        }
+
+        void track(ctx)
     }
 
     const stopRun = (): void => {
@@ -173,7 +202,8 @@ export default function (pi: ExtensionAPI) {
         }
     })
 
-    // The tool is in the session from its first turn, since a later tool change empties the cache.
+    // The tool is in the session from its first turn: a tool change empties the cache, and the
+    // steps turn pays that once.
     const openSubagent = (
         ctx: ExtensionContext
     ): {session: SubagentSession; knowsGoal: boolean} => {
@@ -220,6 +250,7 @@ export default function (pi: ExtensionAPI) {
         if (run.controller.signal.aborted) return
         closeSubagent()
         error = failure instanceof Error ? failure.message : String(failure)
+        failedRequest = run.request
         repaint?.()
     }
 
@@ -251,11 +282,14 @@ export default function (pi: ExtensionAPI) {
         const check = sendBackSteps(ctx.cwd, run.controller.signal)
 
         try {
+            // Without the ask tool: refused calls after the questions cost restarts and the model
+            // answered a refusal with a GOAL line (PLANNING_MODE.md, sections 15 and 16).
             const {text: reply} = await current.session.prompt(
                 stepsTask(head, state, change),
                 run.controller.signal,
                 onProgress(run),
-                check
+                check,
+                [askToolName]
             )
             // The send back is skipped once the restarts are spent, so the last reply is unchecked.
             const plan = parseSteps(reply)
@@ -306,6 +340,7 @@ export default function (pi: ExtensionAPI) {
                 // The session's last reply is not the shown goal, so the next change resends it.
                 current.knowsGoal = false
                 error = noGoalLine
+                failedRequest = request
             } else {
                 current.knowsGoal = true
                 save({...idle, request, goal})
@@ -335,6 +370,10 @@ export default function (pi: ExtensionAPI) {
                 const actions: PanelActions = {
                     change: text =>
                         void (state.steps.length > 0 ? planSteps(ctx, text) : refine(ctx, text)),
+                    retry: () => {
+                        error = undefined
+                        void refine(ctx, failedRequest ?? '')
+                    },
                     accept: () => {
                         error = undefined
                         save({...state, accepted: true})
@@ -354,13 +393,8 @@ export default function (pi: ExtensionAPI) {
                         repaint?.()
                     },
                     handOver: () => {
-                        const {goal, decisions} = state
-                        const message = handOverMessage(goal ?? '', decisions, stepsText(state))
                         done()
-                        save(state.steps.length > 0 ? {...state, handed: true} : idle)
-                        // Without deliverAs pi refuses a message while the main agent is busy.
-                        if (goal !== undefined) pi.sendUserMessage(message, {deliverAs: 'followUp'})
-                        void track(ctx)
+                        void handOver(ctx)
                     },
                     stop: () => {
                         save(idle)
@@ -393,6 +427,7 @@ export default function (pi: ExtensionAPI) {
                     ),
                     dispose: () => {
                         repaint = undefined
+                        failedRequest = undefined
                         closeSubagent()
                     }
                 }
@@ -432,13 +467,14 @@ export default function (pi: ExtensionAPI) {
 
     const restore = (_event: unknown, ctx: ExtensionContext): void => {
         state = lastPlan(ctx).state
+        failedRequest = undefined
         void track(ctx)
     }
     pi.on('session_start', restore)
     pi.on('session_tree', restore)
     // Not turn_end: pi rebuilds the whole context for a turn_end handler, in every session.
     pi.on('tool_execution_end', ({toolName}, ctx) => {
-        if (state.handed && writeTools.has(toolName)) void track(ctx)
+        if (state.handed && diskTools.has(toolName)) void track(ctx)
     })
     pi.on('session_shutdown', closeSubagent)
 }

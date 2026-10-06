@@ -1,6 +1,6 @@
 import type {AgentSessionEvent} from '@earendil-works/pi-coding-agent'
 
-type GuardId = 'loop' | 'stale' | 'tool-call' | 'ground' | 'churn' | 'leak' | 'repeat'
+type GuardId = 'loop' | 'stale' | 'tool-call' | 'ground' | 'churn' | 'leak' | 'repeat' | 'circle'
 
 type GuardHit = {id: GuardId; hint: string}
 

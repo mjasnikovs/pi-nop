@@ -24,15 +24,24 @@ const reply = [
     '2. Add a test.',
     'FILES:',
     '- src/greet.js (existing)',
-    '- test/greet.test.js (new)'
+    '- test/greet.test.js (new)',
+    'VERIFY:',
+    '- npm test'
 ].join('\n')
 const plan = {
     steps: ['Fix greet.', 'Add a test.'],
-    files: [existing('src/greet.js'), created('test/greet.test.js')]
+    files: [existing('src/greet.js'), created('test/greet.test.js')],
+    verify: ['npm test']
 }
+const tail = '\nVERIFY:\n- npm test'
+const verifyOf = (rows: string): string[] | undefined =>
+    parseSteps(`STEPS:\n1. Fix it.\nFILES:\nVERIFY:${rows}`)?.verify
 describe('wording', () => {
     test('the rules and the layout are the measured text', () => {
-        expect(stepsLayout).toBe('STEPS:\n1. <one line per step>\nFILES:\n- <path> (existing|new)')
+        expect(stepsLayout).toBe(
+            'STEPS:\n1. <one line per step>\nFILES:\n- <path> (existing|new)\n'
+                + "VERIFY:\n- <the project's test command, nothing else on the line>"
+        )
         expect(stepsRules).toBe(
             [
                 'The questions are done.',
@@ -64,46 +73,53 @@ describe('parseSteps', () => {
 
     test('markdown on the labels and backticks on the file rows are dropped', () => {
         const marked =
-            '**STEPS:**\n1) Fix it.\n`FILES:`\n- `src/greet.js` (existing)\n-b.js (new) `'
+            '**STEPS:**\n1) Fix it.\n`FILES:`\n- `src/greet.js` (existing)\n-b.js (new) `\n*VERIFY:*'
         expect(parseSteps(marked)).toEqual({
             steps: ['Fix it.'],
-            files: [existing('src/greet.js'), created('b.js')]
+            files: [existing('src/greet.js'), created('b.js')],
+            verify: []
         })
     })
 
     test('the files start at the first FILES line after the steps', () => {
-        const early = 'FILES:\n- a.js (new)\nSTEPS:\n1. Fix it.\nFILES:\n- b.js (new)'
-        expect(parseSteps(early)).toEqual({steps: ['Fix it.'], files: [created('b.js')]})
+        const early = `FILES:\n- a.js (new)\nSTEPS:\n1. Fix it.\nFILES:\n- b.js (new)${tail}`
+        expect(parseSteps(early)).toEqual({
+            steps: ['Fix it.'],
+            files: [created('b.js')],
+            verify: ['npm test']
+        })
     })
 
     test('a step keeps its backticks and stars', () => {
-        const starred = "STEPS:\n1. Add `export * from './steps'`.\nFILES:"
+        const starred = "STEPS:\n1. Add `export * from './steps'`.\nFILES:\nVERIFY:"
         expect(parseSteps(starred)?.steps).toEqual(["Add `export * from './steps'`."])
     })
 
     test('no file rows is a plan with no files', () => {
-        expect(parseSteps('STEPS:\n1. Run the tests.\nFILES:')).toEqual({
+        expect(parseSteps(`STEPS:\n1. Run the tests.\nFILES:${tail}`)).toEqual({
             steps: ['Run the tests.'],
-            files: []
+            files: [],
+            verify: ['npm test']
         })
     })
 
     // A row matched in quadratic time runs this into the test runner's time limit.
     test('a path keeps its spaces and brackets, and a long gap before the tag costs no time', () => {
         const gap = ' '.repeat(500_000)
-        const odd = `STEPS:\n1. x\nFILES:\n- app/(group)/my page.tsx${gap}(new)`
+        const odd = `STEPS:\n1. x\nFILES:\n- app/(group)/my page.tsx${gap}(new)${tail}`
         expect(parseSteps(odd)?.files).toEqual([created('app/(group)/my page.tsx')])
-        expect(parseSteps(`STEPS:\n1. x\nFILES:\n- a${gap}b`)).toBeUndefined()
+        expect(parseSteps(`STEPS:\n1. x\nFILES:\n- a${gap}b${tail}`)).toBeUndefined()
     })
 
     test('a path listed twice stays twice', () => {
-        const twice = 'STEPS:\n1. x\nFILES:\n- a.js (new)\n- a.js (new)'
+        const twice = `STEPS:\n1. x\nFILES:\n- a.js (new)\n- a.js (new)${tail}`
         expect(parseSteps(twice)?.files).toEqual([created('a.js'), created('a.js')])
     })
 
     test('escape codes are dropped, and a step of escape codes alone is no step', () => {
-        expect(parseSteps('STEPS:\n1. \x1b[31mFix\x1b[0m it.\nFILES:')?.steps).toEqual(['Fix it.'])
-        expect(parseSteps('STEPS:\n\x1b[31m\x1b[0m\nFILES:')).toBeUndefined()
+        const coloured = `STEPS:\n1. \x1b[31mFix\x1b[0m it.\nFILES:${tail}`
+        expect(parseSteps(coloured)?.steps).toEqual(['Fix it.'])
+        expect(parseSteps(`STEPS:\n\x1b[31m\x1b[0m\nFILES:${tail}`)).toBeUndefined()
     })
 
     test.each([
@@ -129,8 +145,109 @@ describe('parseSteps', () => {
         ['text after the files', 'STEPS:\n1. Fix it.\nFILES:\n- a.js (new)\nDone.'],
         ['the layout given back', stepsLayout],
         ['an empty reply', '']
-    ])('%s is not a plan', (_name, text) => {
+    ])('%s is not a plan, with a good VERIFY part too', (_name, text) => {
         expect(parseSteps(text)).toBeUndefined()
+        expect(parseSteps(text + tail)).toBeUndefined()
+    })
+
+    describe('the VERIFY part', () => {
+        const head = 'STEPS:\n1. Fix it.\nFILES:\n- a.js (new)'
+        test('a row is a command with or without its dash, and a row said twice stays twice', () => {
+            expect(verifyOf('\nnpm test\nnpm test\nbun test')).toEqual([
+                'npm test',
+                'npm test',
+                'bun test'
+            ])
+            expect(verifyOf('\n- npm test\n-   bun test\n-')).toEqual(['npm test', 'bun test'])
+        })
+
+        test('a bare row beside dashed rows is not a plan, in either order', () => {
+            expect(verifyOf('\n- npm test\nDone.')).toBeUndefined()
+            expect(verifyOf('\nnpm test\n- bun test')).toBeUndefined()
+            expect(verifyOf('\n-\nGOAL: Fix it.')).toBeUndefined()
+        })
+
+        test('a leaked closing tag after the commands is dropped, whole or cut', () => {
+            const leaked = '\n- npm test\n\n</parameter>\n\n</function>\n</tool_call>\n</'
+            expect(verifyOf(leaked)).toEqual(['npm test'])
+            expect(verifyOf('\nnode --test\n</thinking>')).toEqual(['node --test'])
+            expect(verifyOf('\n</parameter>\n</tool-call>')).toEqual([])
+        })
+
+        test('a row that only starts like a closing tag is a command', () => {
+            expect(verifyOf('\n</dev/null npm test')).toEqual(['</dev/null npm test'])
+            expect(verifyOf('\nnpm test </parameter>')).toEqual(['npm test </parameter>'])
+            expect(verifyOf('\n<parameter>')).toEqual(['<parameter>'])
+            expect(verifyOf('\necho ```')).toEqual(['echo ```'])
+        })
+
+        test.each([
+            ['no row', ''],
+            ['a bare dash', '\n-'],
+            ['none', '\n- none'],
+            ['None with no dash', '\nNone'],
+            ['none in brackets', '\n- (None)'],
+            ['none in backticks', '\n- `none`'],
+            ['empty backticks', '\n- ``']
+        ])('%s is a plan with no command', (_name, rows) => {
+            expect(verifyOf(rows)).toEqual([])
+        })
+
+        test('a word beside none is a command', () => {
+            expect(verifyOf('\n- none yet')).toEqual(['none yet'])
+            expect(verifyOf('\n- nonexistent')).toEqual(['nonexistent'])
+            expect(verifyOf('\n- echo none')).toEqual(['echo none'])
+        })
+
+        test('backticks around the whole command are dropped, any other stay with the stars', () => {
+            expect(verifyOf('\n- `bun test`')).toEqual(['bun test'])
+            expect(verifyOf('\n- ` bun test `\n- ` none `')).toEqual(['bun test'])
+            expect(verifyOf('\n-  `bun test`\n-\t`bun test`')).toEqual(['bun test', 'bun test'])
+            expect(verifyOf('\n- `a` && `b`')).toEqual(['`a` && `b`'])
+            expect(verifyOf('\n- bun test test/*.test.ts `x`')).toEqual([
+                'bun test test/*.test.ts `x`'
+            ])
+        })
+
+        test('a dash with no space after it is part of the command', () => {
+            expect(verifyOf('\n--coverage\n-bun test')).toEqual(['--coverage', '-bun test'])
+            expect(verifyOf('\nnpm test -- --watch')).toEqual(['npm test -- --watch'])
+        })
+
+        test('with no dash on any row, text after the commands is a command', () => {
+            expect(verifyOf('\nnpm test\nDone.')).toEqual(['npm test', 'Done.'])
+        })
+
+        test('a VERIFY line before the steps is ignored, like any text there', () => {
+            expect(parseSteps(`VERIFY:\n${head}${tail}`)).toEqual({
+                steps: ['Fix it.'],
+                files: [created('a.js')],
+                verify: ['npm test']
+            })
+        })
+
+        test('the label inside a step is step text', () => {
+            const inside = `STEPS:\n1. VERIFY: run it.\nFILES:${tail}`
+            expect(parseSteps(inside)?.steps).toEqual(['VERIFY: run it.'])
+        })
+
+        test.each([
+            ['no VERIFY line', head],
+            [
+                'VERIFY before FILES',
+                'STEPS:\n1. Fix it.\nVERIFY:\n- npm test\nFILES:\n- a.js (new)'
+            ],
+            ['VERIFY before STEPS alone', `VERIFY:\n- npm test\n${head}`],
+            ['a command on the VERIFY line', `${head}\nVERIFY: npm test`],
+            ['a code fence', `${head}\nVERIFY:\n\`\`\`bash\nnpm test\n\`\`\``],
+            ['a code fence after the command', `${head}\nVERIFY:\nnpm test\n\`\`\``],
+            ['a code fence after a dash', `${head}\nVERIFY:\n- \`\`\`\n- npm test`],
+            ['a second VERIFY line', `${head}\nVERIFY:\nnpm test\nVERIFY:\nbun test`],
+            ['a marked label after the commands', `${head}\nVERIFY:\nnpm test\n**FILES:**`],
+            ['STEPS after the commands', `${head}\nVERIFY:\nnpm test\nSTEPS:`]
+        ])('%s is not a plan', (_name, text) => {
+            expect(parseSteps(text)).toBeUndefined()
+        })
     })
 })
 
@@ -190,7 +307,7 @@ describe('misplaced', () => {
 
 describe('sendBackSteps', () => {
     const check = sendBackSteps(cwd, undefined)
-    const tagged = (row: string) => `STEPS:\n1. Fix it.\nFILES:\n${row}`
+    const tagged = (row: string) => `STEPS:\n1. Fix it.\nFILES:\n${row}${tail}`
     test('a plan that matches the disk is accepted', async () => {
         expect(await check(reply)).toBeUndefined()
     })
@@ -223,7 +340,12 @@ describe('stepsText', () => {
     })
 
     test('no steps is no text', () => {
-        expect(stepsText({steps: [], files: [existing('a.js')]})).toBe('')
+        expect(stepsText({steps: [], files: [existing('a.js')], verify: ['npm test']})).toBe('')
+    })
+
+    test('no command is no VERIFY part, and each command gets a dash', () => {
+        expect(stepsText({...plan, verify: []})).toBe(reply.slice(0, -tail.length))
+        expect(stepsText({...plan, verify: ['npm test', 'bun test']})).toBe(`${reply}\n- bun test`)
     })
 })
 

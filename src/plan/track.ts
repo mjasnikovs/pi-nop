@@ -1,4 +1,5 @@
-import {relative} from 'node:path'
+import {stat} from 'node:fs/promises'
+import {relative, sep} from 'node:path'
 
 import {createReadTool} from '@earendil-works/pi-coding-agent'
 import type {SessionEntry} from '@earendil-works/pi-coding-agent'
@@ -6,6 +7,8 @@ import type {SessionEntry} from '@earendil-works/pi-coding-agent'
 import type {Steps} from './steps'
 
 const writeTools = new Set(['edit', 'write'])
+// A command can change a plan file with no edit or write call: `bun add` writes package.json.
+const diskTools = new Set([...writeTools, 'bash'])
 const resolveLabel = 'plan-track'
 
 type StepMark = 'done' | 'open' | 'untracked'
@@ -49,6 +52,16 @@ const resolved = async (cwd: string, path: string): Promise<string> => {
     return found.path
 }
 
+const stamp = async (path: string): Promise<string> => {
+    const found = await stat(path).catch(() => undefined)
+
+    return found === undefined ? '' : `${String(found.mtimeMs)}:${String(found.size)}`
+}
+
+/** One per FILES row: what is on disk now. */
+const stamps = async (cwd: string, plan: Steps): Promise<string[]> =>
+    Promise.all(plan.files.map(async file => stamp(await resolved(cwd, file.path))))
+
 const endsInPath = /[\w./-]$/
 const goesOn = /^(?:[\w/-]|\.\w)/
 
@@ -66,14 +79,32 @@ const stepMark = (written: boolean[]): StepMark => {
     return written.every(Boolean) ? 'done' : 'open'
 }
 
-const progress = async (cwd: string, plan: Steps, calls: string[]): Promise<Progress> => {
+// A FILES row can be a folder, and a file written inside it is that row's work.
+const holds = (row: string, path: string): boolean => path === row || path.startsWith(row + sep)
+
+// An entry saved before the stamps has none, and then no row counts as changed.
+const changedRows = async (rows: string[], handed: string[]): Promise<string[]> => {
+    const now = await Promise.all(handed.map(async (_, index) => stamp(rows[index] ?? '')))
+
+    return rows.filter((_, index) => now[index] !== handed[index])
+}
+
+const progress = async (
+    cwd: string,
+    plan: Steps,
+    calls: string[],
+    handed: string[] = []
+): Promise<Progress> => {
     const [planned, called] = await Promise.all([
         Promise.all(plan.files.map(file => resolved(cwd, file.path))),
         Promise.all(calls.map(path => resolved(cwd, path)))
     ])
-    const written = new Set(called)
-    const wanted = new Set(planned)
-    const files = planned.map(path => written.has(path))
+    const written = [...new Set(called)]
+    const wanted = [...new Set(planned)]
+    const changed = await changedRows(planned, handed)
+    const done = (row: string): boolean =>
+        changed.includes(row) || written.some(path => holds(row, path))
+    const files = planned.map(done)
 
     return {
         files,
@@ -84,9 +115,11 @@ const progress = async (cwd: string, plan: Steps, calls: string[]): Promise<Prog
                 )
             )
         ),
-        outside: [...written].filter(path => !wanted.has(path)).map(path => relative(cwd, path)),
-        written: [...wanted].filter(path => written.has(path)).length,
-        total: wanted.size
+        outside: written
+            .filter(path => !wanted.some(row => holds(row, path)))
+            .map(path => relative(cwd, path)),
+        written: wanted.filter(done).length,
+        total: wanted.length
     }
 }
 
@@ -96,5 +129,5 @@ const statusText = ({written, total, outside}: Progress): string => {
     return outside.length === 0 ? files : `${files} · outside ${String(outside.length)}`
 }
 
-export {names, progress, statusText, writes, writeTools}
+export {diskTools, names, progress, stamps, statusText, writes}
 export type {Progress, StepMark}

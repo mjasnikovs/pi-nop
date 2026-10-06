@@ -75,11 +75,13 @@ type SubagentResult = {
 type SendBack = (answer: string) => string | undefined | Promise<string | undefined>
 
 type SubagentSession = {
+    /** `without` names tools the model does not get for this prompt. */
     prompt: (
         task: SubagentTask,
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate,
-        sendBack?: SendBack
+        sendBack?: SendBack,
+        without?: string[]
     ) => Promise<SubagentResult>
     dispose: () => void
 }
@@ -128,6 +130,11 @@ const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOption
     }
 }
 
+const toolNames = (options: SubagentOptions): string[] => [
+    ...options.tools,
+    ...(options.customTools ?? []).map(tool => tool.name)
+]
+
 const buildSession = async (options: SubagentOptions): Promise<AgentSession> => {
     const customTools = options.customTools ?? []
     const settingsManager = SettingsManager.create(options.cwd, getAgentDir())
@@ -154,7 +161,7 @@ const buildSession = async (options: SubagentOptions): Promise<AgentSession> => 
         settingsManager,
         resourceLoader: loader,
         // pi drops a custom tool whose name is not on the allowlist.
-        tools: [...options.tools, ...customTools.map(tool => tool.name)],
+        tools: toolNames(options),
         customTools,
         thinkingLevel: options.thinkingLevel,
         model: options.model
@@ -293,7 +300,8 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate,
         settings: GuardSettings,
-        sendBack: SendBack | undefined
+        sendBack: SendBack | undefined,
+        without: string[]
     ): Promise<SubagentResult> => {
         const startedAt = performance.now()
 
@@ -304,6 +312,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         opening ??= open()
         const current = await opening
         const contextWindow = current.model?.contextWindow ?? 0
+        current.setActiveToolsByName(toolNames(options).filter(name => !without.includes(name)))
 
         const onAbort = () => {
             void current.abort()
@@ -385,7 +394,8 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         task: SubagentTask,
         signal: AbortSignal | undefined,
         onUpdate: SubagentUpdate,
-        sendBack?: SendBack
+        sendBack?: SendBack,
+        without: string[] = []
     ): Promise<SubagentResult> => {
         // Read on every prompt, so a session kept open still follows the current settings.
         const nop = safeConfig()
@@ -398,7 +408,8 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
                     signal,
                     onUpdate,
                     {...guardSettings(nop), waits: new Set(options.waitingTools)},
-                    sendBack
+                    sendBack,
+                    without
                 ),
             () => onUpdate?.({type: 'queued'})
         )
@@ -508,6 +519,7 @@ export {
     runSubagent,
     SubagentErrors,
     subagentSession,
+    SubagentTools,
     unlessAborted
 }
 export type {

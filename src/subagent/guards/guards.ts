@@ -3,6 +3,7 @@ import type {AgentSession, AgentSessionEvent} from '@earendil-works/pi-coding-ag
 import type {NopConfig} from '../../config/config'
 import {read, restarts, staleMinutes, toolCallMinutes} from '../../config/config'
 import {createChurn} from './churn'
+import {createCircle} from './circle'
 import type {Clock, Guard, GuardHit} from './guard'
 import {realClock} from './guard'
 import {createGround} from './ground'
@@ -77,7 +78,8 @@ const watchGuards = (
         createLoop(trip, visited),
         createGround(trip, visited, settings.waits),
         createLeak(trip),
-        createRepeat(trip, visited)
+        createRepeat(trip, visited),
+        createCircle(trip, visited)
     ]
     if (settings.staleMs !== undefined) guards.push(createStale(trip, settings.staleMs, clock))
     if (settings.toolCallMs !== undefined)

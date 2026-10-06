@@ -1,5 +1,6 @@
 import type {Guard, Trip} from './guard'
 import {noop} from './guard'
+import {createLineReader} from './lines'
 import type {Visited} from './visited'
 
 // MAGIC NUMBER: measured in PLANNING_MODE section 11. Fewer copies hit more quoted files.
@@ -36,8 +37,8 @@ const repeatedBlock = (lines: string[]): number | undefined => {
 
 // A model looping inside one block makes no tool call, so no other guard sees it.
 const createRepeat = (trip: Trip, visited: Visited): Guard => {
+    const reader = createLineReader()
     let lines: string[] = []
-    let open = ''
 
     return {
         onEvent: event => {
@@ -46,18 +47,13 @@ const createRepeat = (trip: Trip, visited: Visited): Guard => {
 
             if (update.type === 'thinking_start' || update.type === 'text_start') {
                 lines = []
-                open = ''
+                reader.reset()
                 return
             }
 
             if (update.type !== 'thinking_delta' && update.type !== 'text_delta') return
-            const rows = update.delta.split('\n')
-            rows[0] = open + (rows[0] ?? '')
-            open = rows.pop() ?? ''
 
-            for (const row of rows) {
-                const line = row.trim()
-                if (line === '') continue
+            for (const line of reader.take(update.delta)) {
                 lines.push(line)
                 const size = repeatedBlock(lines)
 

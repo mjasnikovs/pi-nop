@@ -21,13 +21,13 @@ call with `Subagent killed by the guard: <name>`.
 
 The goal turn of `/plan` uses the same budget. While it lasts, a finished reply with no `GOAL:` line
 is sent back to the model with a note, in the same conversation. After that the panel shows the
-error. A reply that failed or was cut off at the output limit is not sent back.
+error with a "Try again" row, and typed text is a new request. A reply that failed or was cut off
+at the output limit is not sent back.
 
-The steps turn of `/plan` does the same for a reply that is not in the `STEPS:` and `FILES:`
-layout, or that tags a file `existing` when no regular file is at that path, or `new` when one
-is. One note names
-one file, so two wrong files cost two of the budget. With `restarts` at 0 such a reply fails the
-turn.
+The steps turn of `/plan` does the same for a reply that is not in the `STEPS:`, `FILES:` and
+`VERIFY:` layout, or that tags a file `existing` when no regular file is at that path, or `new`
+when one is. One note names one file, so two wrong files cost two of the budget. With `restarts`
+at 0 such a reply fails the turn. The steps turn runs without the `ask_user` tool.
 
 - **loop**: the same tool call five times in the last twenty, or one file re-read five times
   without reaching new lines. The note names the call and lists what the attempt had read.
@@ -43,11 +43,28 @@ turn.
 - **repeat**: one thinking or answer block ends on the same run of lines eight times in a row.
   A model that loops there makes no tool call, so nothing else stops it before the output limit.
   One line repeated on its own is not a hit, and neither is a loop with no line break in it.
+- **circle**: one thinking block says two different sentences eight times each, with any lines
+  between. A loop where one line changes each round is caught here, before it repeats a whole
+  block. A line counts when it starts with a letter and ends with `.`, `!` or `?`, so drafted
+  code and list rows do not.
+
+## Plan verify part
+
+A row under `VERIFY:` in the steps reply is a command for the main agent to run when the steps are
+done, with or without a dash. A bare dash or `none` is no command. A row with no dash beside rows
+with one is sent back as a bad layout. A row that is only a closing tag, like `</parameter>`, is
+dropped. The command is not checked and `/plan` never runs it. Hand over sends it after the files.
+The panel keeps it whole while steps and files shrink to counts. On a screen too short even for
+that, the panel is cut from the top.
 
 ## Plan tracking
 
 After hand over of a plan with steps `/plan` tracks it. The footer shows `plan: files 3/4 · outside
 1`: how many of the plan's files the main agent called `edit` or `write` on, and how many other
 files. `/plan` opens the plan with a mark on each file and step. A step is done when every plan file
-it names was written, and has a dot when it names none. "Stop tracking" or a new plan ends it. A
-write through bash or inside a codemode script is not seen.
+it names was written, and has a dot when it names none. A row that is a folder is written once a
+file inside it is. A plan file a command changed counts too, by its last write time and size
+against hand over: `bun add` and `package.json`. The count runs when an `edit`, `write` or `bash`
+call ends. "Stop tracking" or a new plan ends it. Not seen: a write through bash or a codemode
+script to a file outside the plan. For a folder row a command counts only when it adds, removes
+or renames an entry right inside the folder.

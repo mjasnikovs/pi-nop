@@ -21,6 +21,7 @@ type FakeSession = {
     prompt: ReturnType<typeof mock>
     abort: ReturnType<typeof mock>
     dispose: ReturnType<typeof mock>
+    setActiveToolsByName: ReturnType<typeof mock>
     getSessionStats: ReturnType<typeof mock>
     subscribe: ReturnType<typeof mock>
     unsubscribe: ReturnType<typeof mock>
@@ -81,6 +82,7 @@ const makeSession = (): FakeSession => {
         }),
         abort: mock(() => Promise.resolve()),
         dispose: mock(() => undefined),
+        setActiveToolsByName: mock((_names: string[]) => undefined),
         getSessionStats: mock(() => stats),
         subscribe: mock((listener: (event: {type: string}) => void) => {
             listeners.push(listener)
@@ -147,6 +149,7 @@ const {
     registerSubagentTool,
     runSubagent,
     subagentSession,
+    SubagentTools,
     default: register
 } = await import('../../src/subagent/subagent')
 useAgentDir()
@@ -506,6 +509,21 @@ describe('subagentSession', () => {
         handle.dispose()
         handle.dispose()
         expect(session.dispose).toHaveBeenCalledTimes(1)
+    })
+
+    test('a prompt without a tool takes it from the session for that prompt only', async () => {
+        const ask = {name: 'ask_user'} as unknown as ToolDefinition
+        const handle = subagentSession({
+            ...sessionOptions,
+            tools: [SubagentTools.Read],
+            customTools: [ask]
+        })
+        await handle.prompt('one', undefined, noProgress, undefined, ['ask_user'])
+        expect(session.setActiveToolsByName).toHaveBeenLastCalledWith(['read'])
+        answer('second')
+        await handle.prompt('two', undefined, noProgress)
+
+        expect(session.setActiveToolsByName).toHaveBeenLastCalledWith(['read', 'ask_user'])
     })
 
     test('a prompt answers only from its own turns', async () => {

@@ -31,6 +31,7 @@ const width = 60
 const wide = 100
 const change = mock((_text: string) => undefined)
 const accept = mock((_text: string) => undefined)
+const retry = mock((_text: string) => undefined)
 const handOver = mock((_text: string) => undefined)
 const close = mock((_text: string) => undefined)
 const leave = mock((_text: string) => undefined)
@@ -44,6 +45,7 @@ const repaint = mock(() => undefined)
 const actions = {
     change,
     accept,
+    retry,
     answer,
     ask,
     plan,
@@ -67,6 +69,7 @@ const state = (over: Partial<PanelState> = {}): PanelState => ({
     decisions: [],
     steps: [],
     files: [],
+    verify: [],
     running: false,
     status: '',
     ...over
@@ -100,6 +103,22 @@ describe('PlanPanel', () => {
         const lines = panel.render(width)
         expect(lines).toContain('fix it')
         expect(lines).not.toContain('Type what you want done.')
+    })
+
+    test('a failed goal run keeps the request and offers Try again', () => {
+        panel.setState(state({request: 'fix it', error: 'Subagent killed by the guard: loop'}))
+        const lines = panel.render(width)
+        expect(lines).toContain('fix it')
+        expect(lines).toContain('Subagent killed by the guard: loop')
+        expect(lines.join('\n')).toContain(`→ <${rows.retry.label}>`)
+        expect(hint(panel)).toBe('type a new request  ·  ↑↓ pick  ·  enter try again  ·  esc close')
+        panel.handleInput(enter)
+        expect(retry).toHaveBeenCalledTimes(1)
+    })
+
+    test('a failed run with no request has no menu', () => {
+        panel.setState(state({error: 'No model selected'}))
+        expect(panel.render(width).join('\n')).not.toContain(rows.retry.label)
     })
 
     test('a running panel keeps its own clock', () => {
@@ -277,6 +296,20 @@ describe('PlanPanel', () => {
             expect(changeGoal).toHaveBeenCalledTimes(1)
         })
 
+        test('the commands show last, each with a dash, wrapped and with no escape codes', () => {
+            const long = `bun test ${'test/plan/panel.test.ts '.repeat(4).trim()}`
+            panel.setState(state({...planned, verify: ['\x1b[31mnpm\x1b[0m test', long]}))
+            const text = panel.render(width).join('\n')
+            expect(text).toContain('test/greet.test.js (new)\n\nVERIFY\n- npm test\n- bun test ')
+            expect(text.replaceAll('\n', ' ')).toContain(`- ${long}`)
+            expect(text).not.toContain(long)
+        })
+
+        test('a plan with no command shows no VERIFY part', () => {
+            panel.setState(state(planned))
+            expect(panel.render(width).join('\n')).not.toContain('VERIFY')
+        })
+
         test('typed text is a change', () => {
             panel.setState(state(planned))
             expect(hint(panel)).toBe(
@@ -343,10 +376,24 @@ describe('PlanPanel', () => {
                 expect(text()).toContain('OUTSIDE\nNOTES.md')
             })
 
-            test('no outside file, no outside heading', () => {
+            test('no outside file, no outside heading and no outside count', () => {
                 panel.setState({...handed, progress: {...progress, steps: [], outside: []}})
-
+                const full = panel.render(width).length
                 expect(text()).not.toContain('OUTSIDE')
+                limit = full - 9
+
+                expect(text()).toContain('Files: 1/2\n')
+                expect(text()).not.toContain('Outside')
+            })
+
+            test('an outside path wraps and loses its escape codes', () => {
+                const far = `docs/${'a long folder name '.repeat(4)}/notes.md`
+                const outside = ['\x1b[31mNOTES.md\x1b[0m', far]
+                panel.setState({...handed, progress: {...progress, steps: [], outside}})
+
+                expect(text()).toContain('OUTSIDE\nNOTES.md\ndocs/a long folder name ')
+                expect(text()).not.toContain(far)
+                expect(text().replaceAll('\n', ' ')).toContain(far)
             })
 
             test('a plan with no files still shows its outside files, listed or counted', () => {
@@ -427,6 +474,43 @@ describe('PlanPanel', () => {
                 expect(text()).not.toContain('STEPS')
                 expect(text()).toContain('→ <Send to main context>')
                 expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+            })
+
+            describe('with commands', () => {
+                const lengthy =
+                    'bun test test/plan/panel.test.ts test/plan/steps.test.ts test/plan/plan.test.ts'
+                const checked = {...long, verify: ['npm test', lengthy, 'bun run lint']}
+                const block =
+                    'VERIFY\n- npm test\n- bun test test/plan/panel.test.ts test/plan/steps.test.ts\n'
+                    + 'test/plan/plan.test.ts\n- bun run lint\n'
+                const part = `\n\n${block}`
+
+                const fittedChecked = () => {
+                    panel.setState(state(checked))
+                    return panel.render(width).length
+                }
+                test.each([2, 4, 6])('no stage cuts them, %i lines short', short => {
+                    limit = fittedChecked() - short
+
+                    expect(text()).toContain(part)
+                    expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+                })
+
+                test('the last stage has the counts above them', () => {
+                    limit = fittedChecked() - 6
+
+                    expect(text()).toContain(`Steps: 2\nFiles: 2${part}`)
+                })
+
+                test('a screen too short for the last stage loses them last', () => {
+                    limit = fittedChecked() - 6
+                    const tight = panel.render(width).length
+                    limit = tight - 5
+
+                    expect(text()).not.toContain('Steps: 2')
+                    expect(text()).toContain(block)
+                    expect(panel.render(width).length).toBeLessThanOrEqual(limit)
+                })
             })
         })
     })

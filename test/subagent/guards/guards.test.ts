@@ -85,6 +85,22 @@ describe('watchGuards', () => {
         expect(abort).toHaveBeenCalledTimes(1)
     })
 
+    test('thinking that says two lines again and again around a changing one aborts the run', () => {
+        const {session, emit, abort} = fakeSession()
+        const watch = watchGuards(session, settings, 0, fakeClock())
+        const delta = Array.from(
+            {length: 8},
+            (_, index) => `Check route ${String(index)}.\nYes.\nI'll proceed.\n`
+        ).join('')
+        emit({
+            type: 'message_update',
+            assistantMessageEvent: {type: 'thinking_delta', delta}
+        } as unknown as AgentSessionEvent)
+
+        expect(watch.hit()?.id).toBe('circle')
+        expect(abort).toHaveBeenCalledTimes(1)
+    })
+
     test('calls with no id are paired in order, so a hung second call is still caught', () => {
         const {session, emit, abort} = fakeSession()
         const clock = fakeClock()

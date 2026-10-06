@@ -186,7 +186,8 @@ pi-task's decisions block. Cut to what a local model can fill and code can check
 5. Reuse. Optional. Existing code the steps build on, quoted as whole lines. Code checks each
    line is in the named file, the same check `answer.ts` does for evidence today.
 6. Verify. The command to run and the expected result. Superpowers writes `Expected: PASS`
-   per step. One verify line per plan is enough for a local model to start.
+   per step. One verify line per plan is enough for a local model to start. Built in section 14
+   as a list of commands with no expected result.
 7. Out of scope. Optional. What the plan leaves alone. Claude Code's plan phase and superpowers
    both name it. Free text.
 
@@ -274,8 +275,8 @@ Checks code can add to `submit_plan`:
 1. Read-before-plan. `tool_execution_start` carries the `read` path. Log it. Reject an
    `existing` file the model never opened.
 2. Reuse lines must come from a file in the read log, on top of the whole-line match.
-3. Verify command is real: first word in `package.json` scripts or on PATH.
-4. Run the verify command on approve and show the result in the dialog.
+3. Verify command is real: first word in `package.json` scripts or on PATH. Not taken, section 14.
+4. Run the verify command on approve and show the result in the dialog. Not taken, section 14.
 5. Ordering: a `new` file must be created by the step that first names it or an earlier one.
 6. Path safety: every path resolves inside cwd, none matched by `.gitignore`.
 7. Dead entries: a listed file no step names is rejected. Two steps with the same text too.
@@ -293,11 +294,12 @@ Fields code can fill with no model at all:
 15. Files, existing: the read log. The model only names new files, tagged `new` when not on
     disk.
 16. Reuse: `export` lines grepped from the read files. No quoting by the model.
-17. Verify: the `test` or `check` script from `package.json`. Exit code is the expectation.
+17. Verify: the `test` or `check` script from `package.json`. Exit code is the expectation. Not
+    taken: the model writes it, section 14.
 18. Out of scope: read files minus step files.
 19. Execution tracking without `step_done`: diff git after each turn, a step is done when all
     its files changed. pi-task's working-tree diff is the precedent.
-20. Drop `verify.expect`: the command's exit code replaces it.
+20. Drop `verify.expect`: the command's exit code replaces it. Taken, section 14.
 
 If 13 to 20 hold, the model writes one field, `steps`, and the tool list is `ask_user` and
 `submit_plan`. Section 3 rows to re-measure shrink to the shape, the stop, and the refine.
@@ -843,8 +845,9 @@ path of a call over 8 KB. So they are not read. A fifth found no fault in the co
 lines, now tested. After the change to `tool_execution_end` the flow ran once more on Qwen in the
 real TUI: footer 0/2, 2/2, and 2/2 after `/reload`.
 
-Tests: `test/plan/track.test.ts` and new cases in the plan and panel tests. 63 mutants, 63 killed
-(`harness/track/mutate.py`).
+Tests: `test/plan/track.test.ts` and new cases in the plan and panel tests. 63 mutants, 60 killed
+(`harness/track/mutate.py`). The first count, 63 killed, came from a script that judged by the exit
+code. See section 14.
 
 Left as is:
 
@@ -863,4 +866,562 @@ Left as is:
 
 Not measured: the main model on a real repo, a plan longer than the screen in the handed panel,
 the footer beside other statuses on a narrow screen.
+
+## 14. VERIFY part, measured
+
+Built 2026-10-04 on pi 1.0.2. The steps reply ends with a third part, the commands the main agent
+runs when the steps are done. The layout (`stepsLayout` in `src/plan/steps.ts`):
+
+```
+STEPS:
+1. <one line per step>
+FILES:
+- <path> (existing|new)
+VERIFY:
+- <the project's test command, nothing else on the line>
+```
+
+The `VERIFY:` label must be there, alone on its row, after the file rows. Every row after it is one
+command, with or without a dash. A pair of backticks around the whole command is dropped. A bare
+dash, an empty pair of backticks, or `none` in any case, in brackets or not, is no command, so the
+list may be empty. A code fence or a second label after `VERIFY:` makes the reply no plan, and so
+does a row with no dash beside rows that have one. A row that is only a closing tag is dropped. The
+command is not checked and code never runs it. The panel shows the commands after the files, whole
+at every stage of a short screen. Hand over sends the part after the files when the list is not
+empty. Tracking does not read it.
+
+Harness: `harness/verify/`, runs in `harness/runs/verify/`.
+
+### Why: the main model
+
+`main-run.ts`. The hand-over message as the first prompt of the main model, fixture repo, the
+4-step plan P4 of section 13 with a new README. Gemma 4 12B, 30 sessions per arm:
+
+| Handed plan | Ran the tests | Tests pass at the end |
+|---|---|---|
+| The shipped message, no verify part | 11/30 | 27/30 |
+| A fifth step "Run npm test and confirm it passes." | 30/30 | 30/30 |
+| `VERIFY:` and `- npm test` after FILES | 30/30 | 29/30 |
+| The same and `- node src/cli.js farewell bob` | 30/30, the second command 29/30 | 30/30 |
+| `VERIFY:` and `npm test` with no dash | 30/30 | 28/30 |
+| `VERIFY:` before `STEPS:` | 30/30 | 29/30 |
+
+With the run step the first test run failed and a later one passed in 19 of 30 sessions. Eight
+more sessions were logged with the test output: 7 failed first, 6 of them because the model's edit
+had dropped the `shout` export of `src/greet.js`. The four sessions that ended
+red with a verify part are one shape: the tests ran, failed, and the model stopped with an empty
+reply. Section 13 had 24/30 passing for the shipped message, so 51 of 60 in all.
+
+Qwen 3.8 27B, 10 sessions per arm: tests ran 10/10 and passed 10/10 with no verify part, with the
+run step and with `VERIFY:`. Gemma ran `npm test` word for word. Qwen ran it alone in 3 of 10
+sessions and in a chain like `npm test 2>&1 | tail -8` or `npm test && node src/cli.js farewell
+alice` in the rest. A piped or chained call hides the exit code, so a pass mark read from the bash
+call would be wrong there. No mark was built.
+
+### The wording: the planner
+
+`plan-probe.ts`. Shipped goal and questions code, a scripted user, the requests and the change of
+section 12. Test command means `npm test`, `node --test` or a file run with node. Gemma, 60
+sessions per row, 30 per request:
+
+| Row under `VERIFY:` | Steps valid | Change turn valid | Plan names a test command |
+|---|---|---|---|
+| No VERIFY part, the layout of section 12 | 60/60 | 59/60 | |
+| `- <command that checks the work>` | 60/60 | 59/60 | 7/60 |
+| The same and a rule "End with the commands that check the work." | 60/60 | 59/60 | 13/60 |
+| `- <the project's test command>` | 58/60 | 57/58 | 58/58 |
+| `- <command that fails now and passes when the work is done>`, 9 sessions | 9/9 | 9/9 | 1/9 |
+| `- <the project's test command, nothing else on the line>` | 60/60 | 59/60 | 59/60 |
+| `- <the project's test command, nothing else on the line, or none>` | 60/60 | 59/60 | 27/60, `none` 33 |
+| The shipped row and a rule "If the project has no test command, the VERIFY row is: - none" | 60/60 | 60/60 | 39/60, `none` 21 |
+
+`cmd-eval.py` ran every command under bwrap in a copy of the fixture and in a copy with a reference
+farewell. With "command that checks the work" 139 of 142 farewell commands exit 0 before any work,
+like `node src/cli.js farewell Alice`. Two of 37 for "nicer" wait on stdin, `grep -q "Hello"` with
+no file. With "the project's test command" 5 of 58 rows had a note after the command, like `npm
+test (or whatever the project uses, I'll check package.json)`, and bash fails on it. With "nothing
+else on the line" 59 of 60 run as written. The other is `node --test<|"|>`, a model token.
+
+A word for "no tests" in the layout or in the rules made Gemma write `none` on a repo that has
+tests, 33 and 21 of 60. So the shipped wording has none.
+
+Qwen, the shipped wording, 40 sessions: steps valid 38/40, change 38/38, a test command in 38/38.
+The probe asked for the dash and Qwen left it out: the first reply was valid in 18 of 40, against
+19 of 20 for the layout of section 12. 15 of 17 logged first replies were a plan with `npm test` on
+its own row. So a row needs no dash.
+
+Change in a fresh session, the steps and the part sent as text: Gemma 30/30 steps, 29/30 change,
+the command kept in 28 of 29. Qwen 10/10, 10/10, kept in 10 of 10. In the same session Gemma kept
+the command in 55 of 59 change turns.
+
+### A repo with no tests
+
+The fixture without `test/` and without the `test` script, the shipped wording:
+
+| | Gemma, 60 sessions | Qwen, 20 sessions |
+|---|---|---|
+| Steps valid, the probe's parser | 54/60 | 20/20 |
+| `none`, `None` or `(None)` | 42 | 1 |
+| A bare dash, sent back twice, a failed turn | 6 | 0 |
+| `npm test` anyway | 8 | 0 |
+| A run command, like `node src/cli.js farewell` | 1 | 17 |
+| `none` and a note, `n/a`, or a sentence | 3 | 2 |
+
+So a bare dash and `none` are read as no command. The rest is handed over as written.
+
+### Real repo
+
+This repo, request "Add a Steps step to the /plan panel.":
+
+| | Gemma, shipped layout before | Gemma, with VERIFY | Qwen, before | Qwen, with VERIFY |
+|---|---|---|---|---|
+| Sessions | 20 | 30 | 5 | 5 |
+| Reached the steps turn | 9 | 12 | 5 | 5 |
+| Steps valid | 4/9 | 5/12 | 5/5 | 5/5 |
+| Command | | `npm test test/plan/panel.test.ts` 2, `bun test`, `npm test`, `bun test -- Tessa-only test/plan/panel.test.ts` | | `bun test` 4, `npm test` 1 |
+
+Gemma is weak on this repo with or without the part. The `test` script here is `bun test`.
+
+### Shipped parser
+
+`replay.ts` ran the shipped `parseSteps` over every logged reply. 1270 plans the probe parsed: the
+same steps and files on 1270, the same commands on 1266. On the other 4 the probe had cut a
+backtick out of the middle of a row and the shipped parser keeps the row whole. 48 replies the
+probe sent back are plans to the shipped parser, a row with no dash or a bare dash. 37 are refused
+by both, such as a `GOAL:` line, `VERIFY:` before `FILES:`, or a tag like `(new|existing)`. All 178 logged
+replies with no VERIFY part are refused.
+
+pi facts, 1.0.2: pi exports nothing that parses a shell command or finds a project's test command.
+A bash call that exits non-zero has `isError: true` and the text `Command exited with code N`. The
+exit code itself is on the `tool_result` event only, not in the session.
+
+### Shipped code
+
+`plan-product.ts`, the shipped `src/plan/steps.ts`, same scenarios. Gemma, 15 sessions per row:
+
+| Arm | Steps valid | Change turn valid | Commands |
+|---|---|---|---|
+| Fixture, farewell | 15/15 | 15/15 | a test command 15/15 |
+| Fixture, nicer | 15/15 | 15/15 | a test command 15/15 |
+| No tests, same session | 15/15 | 15/15 | none 14, `None provided in the environment.` 1 |
+| No tests, change in a fresh session | 15/15 | 15/15 | first plan: none 13, `npm test` 2 |
+
+Four of the 30 no-tests plans ended on a bare dash or on the label alone, the shapes the probe's
+parser had refused.
+
+Qwen, 10 sessions per row, first with the parser as planned, then with the two rules below:
+
+| Arm | Steps valid | Change turn valid | Turns with a tag as a command, before | After |
+|---|---|---|---|---|
+| Fixture, farewell | 10/10 | 10/10 | 0/20 | 0/20 |
+| Fixture, nicer | 10/10 | 10/10 | 1/20 | 0/20 |
+| No tests, same session | 10/10 | 10/10 | 6/20 | 0/20 |
+| No tests, change in a fresh session | 10/10 | 10/10 | 2/20 | 0/20 |
+| Fixture, change in a fresh session | 10/10 | 10/10 | 0/20 | 0/20 |
+
+Qwen ends some replies on a closing tag: `</parameter>`, `</function>`, `</tool_call>`,
+`</thinking>`, or a cut `</`. A row needs no dash, so the first shipped parser read the tag as a
+command, in 9 of 100 turns. One more turn had a `GOAL:` line after a dashed command. Two rules
+came from that. A row that is only a closing tag is dropped. A row with no dash beside rows with a
+dash makes the reply no plan, so text after dashed commands is sent back as before. Replayed over
+the logs: the 9 turns give the right commands, the `GOAL:` turn and a Gemma reply with `<|"|>` on
+its own row are refused, and 1575 other plans read the same. On the rerun 14 of 100 turns had a
+reply sent back, 11 of them a `GOAL:` line in place of the steps, and every turn ended valid.
+
+A change in a fresh session after a plan with no command: the current steps go as text with no
+VERIFY part, above rules that ask for one. Gemma then wrote a command in 21 of 28 change turns,
+`npm test` in 18, on the repo with no tests. In the same session it did so in 0 of 15. With a
+`VERIFY:` and `- none` row added to the current steps it was 13 of 24, Fisher p = 0.15. Not shown
+to help, so not built.
+
+Real TUI in tmux, pi 1.0.2, fixture repo, request "Add a farewell command to the CLI.", each seen
+once. Qwen: goal, one question, three steps, three files, `VERIFY` and `- npm test` on screen. At
+46 rows the whole plan shows, at 30 each step is one line, at 20 steps and files are counts, at 14
+only the part, the input and the menu are left. The part showed whole at all four. After hand over
+the main model ran `npm test && node src/cli.js farewell && ...`, the footer went to 3/3, and
+`/plan` showed the handed plan with the part under the files. Gemma: the same plan shape with four
+steps, the main model ran `npm test`, the footer went to 3/3.
+
+A second repo, `~/hub/mx5`: a design document, an `AGENTS.md` that says "Always run tests with
+`AGENT=1`", a `test` script `AGENT=1 bun test`, and no source yet. Real TUI, each seen once:
+
+| Model | Request | Command in the plan | The main model ran | Tests after |
+|---|---|---|---|---|
+| Qwen | A zod listing schema with a test | `AGENT=1 bun test` | `AGENT=1 bun test && bun run lint 2>&1 \| tail -5` | 13 pass |
+| Qwen | A Hono health route with a test, then a typed change for a price formatter | `bun run test`, the same after the change | `bun run test` | 16 pass |
+| Gemma | A phone schema with tests | `AGENT=1 bun test` | `AGENT=1 bun test test/schema.test.ts` | 22 pass |
+
+The footer ended on 2/3 and 4/5 in the Qwen runs: `package.json` was changed by `bun add`, a bash
+write the tracker does not see.
+
+Tests: `test/plan/steps.test.ts`, `panel.test.ts`, `plan.test.ts`. 68 mutants of the new lines, 68
+killed (`harness/verify/mutate.py`). The first run of that script counted every mutant as killed:
+a filtered `bun test` run exits 1 here, the coverage threshold, so the fail count is the judge
+now. With it 5 of the first 53 had lived: three got a test, two change no result and left the list.
+After the two rules 5 more lived, the label and fence tests leaned on the new rule, and got tests.
+A second reviewer's mutants found two more, a fence inside a row and a tag with a hyphen, now
+tested.
+
+The tracking mutants of section 13 run with the same judge: 60 of 63 killed, not 63. Of the three
+that lived, `Outside: 0` got a test. The other two change nothing a user can see: the blank row
+before empty counts sits in a stage that is never the first to fit, and the row count in `sameRows`
+only matters for an empty menu. Two older gaps on the OUTSIDE rows, the wrap and the escape codes,
+got a test too.
+
+Left as is:
+
+- The command is not checked. A note after it, a model token on its row, or `npm test` on a repo
+  with no `test` script all go to the main agent as written. So does prose after the rows when no
+  row has a dash.
+- On a repo with no tests Qwen writes a run command that passes before any work, 17 of 20.
+- A `~~~` fence, a label behind a dash (`- VERIFY:`), a dash behind a dash (`- -`), a tag behind
+  a dash, two tags on one row, a bullet that is not a dash (`* npm test`, `1. npm test`) and
+  `**None**` are read as commands. Of these only `- - none` is in the logged replies, 4 times, all
+  in the arm whose rules named `- none`.
+- A change turn rewrites the commands with the rest of the plan. Gemma changed them unasked in 4
+  of 59 turns in the same session.
+- A wrong command is fixed by a typed change, a whole model turn.
+- A screen too short for the counts is cut from the top, so the commands go last but can go.
+- A plan saved before this part has no commands and hands over as it did.
+- No mark after hand over says the command ran.
+
+Not measured: a repo with a test runner that is not npm or bun, more than three commands in the
+panel, a repo with a test that needs a service that is not running.
+
+
+## 15. A night on a real repo, measured
+
+2026-10-05, pi 1.0.2. `~/hub/mx5`: a 375-line design document, three source files, three test
+files, `AGENTS.md`. Real TUI in tmux first, then probes on the same checkout, read-only. Harness:
+`harness/night/` (README there), runs in `harness/runs/night/`.
+
+### Real TUI
+
+Qwen 3.8 27B, one pi session, three plans one after the other, each handed over:
+
+| Request | Questions | Steps | Files in the plan | Footer at the end | Tests after |
+|---|---|---|---|---|---|
+| Add a location field to the listing schema, with a test. | 1 | 5 | 2 | 2/2 | 24 pass |
+| Add the listings API from DESIGN/PROJECT.md. No database yet, keep listings in memory. | 0 | 5 | 3 | 3/3 · outside 1 | 46 pass |
+| Members should be able to sign up with an invite link. | 1 | 6 | 7 | 7/7 | 66 pass |
+
+Each seen once and right: a typed goal change, a typed steps change, a new `/plan <text>` while a
+plan is tracked, Esc on a question then "Close and stop" then `/plan` and "Ask questions", the
+panel open while the main agent works, quit and `pi -c`, `/compact` then `pi -c`, a 100 by 24
+terminal. `package.json` was the outside file, an `edit` call. `bun run lint` rewrote a file
+through prettier, a bash write, not counted.
+
+Gemma 4 12B: the first plan ended 2/2 with 23 tests passing. On the second the main model wrote
+96,564 tokens inside one `edit` call, the server stopped at the context limit, and pi showed
+"Working" until Esc, 20 minutes later. That is the main agent, which no pi-nop guard watches.
+
+Faults seen in the TUI, each once:
+
+- A typed steps change "Drop pagination" took pagination out of the steps. The goal still said
+  "sort and pagination", on screen and in the hand over. The main model followed the steps.
+- Qwen offered the option "Something else — let me describe it". Picked, it is the answer. The
+  model asked nothing more and the row went to the main agent as a settled decision.
+- At 24 rows the handed plan shows counts only: no row says which step or file is open.
+- A step that names no plan file keeps its dot: 3 of 5 steps in the first plan, 2 of 5 in the second.
+
+### Folder rows
+
+Gemma wrote a folder as a FILES row, tagged `new`: `src/server/routes/`, `src/client`, `test/`.
+The disk check passes it, since no regular file is there. The tracker then waited for a write to
+the folder itself, so the footer could not reach the total.
+
+| Model, whole flow on mx5 | Plans | Plans with a folder row |
+|---|---|---|
+| Gemma, shipped | 26 | 8 |
+| Gemma, new goal line and circle guard | 30 | 5 |
+| Qwen, all arms | 54 | 1 |
+
+In the 3,485 plans logged before tonight, all on the flat fixture, there was none.
+
+Now a FILES row is written once a file at or under its path was written, and a file under a plan
+row is not outside (`holds` in `src/plan/track.ts`). The parser and the disk check did not change.
+8 mutants of the lines, 8 killed.
+
+Left as is: a row `.` or `src/` takes every write under it, so outside stays 0. A step that names
+the folder with a slash the row does not have keeps its dot. A folder tagged `existing` still
+gets the note "is marked existing but is not on disk".
+
+### Circle guard
+
+The proxy (`night/proxy.ts`) caught what section 11 could not: Gemma thinking that loops while one
+line changes each round, so no block of lines repeats.
+
+```
+Wait, I'll check if I should use `sql` for the listing edit logic.
+Yes.
+I'll proceed.
+Actually, I'll start.
+Wait, I'll check if I should use `sql` for the listing sold action logic.
+Yes.
+```
+
+The model wants to write a file and has no tool for it ("Since I don't have a `mkdir` tool, I'll
+just try to create the file."). The repeat guard stops such a block only once the changing line
+runs out of new values and the round comes back whole: after 37.4k characters in one capture,
+17.9k and 16.8k in two more.
+
+Detector: one thinking block says two different sentence lines N times each, with any lines
+between. A sentence line starts with a letter and ends with `.`, `!` or `?`. Without that rule
+healthy thinking that drafts code trips it: a fence 37 times in one block, `}` 29 times in another.
+`night/circle-table.py`, over 4,899 healthy thinking blocks (262 of section 11, 4,636 from every
+saved pi session on this machine, Qwen and kimi main agents, and one of tonight's) and 12 loops
+(the six of section 11, six captured tonight):
+
+| N | Healthy blocks hit | Loops stopped | Stop at, characters |
+|---|---|---|---|
+| 3 | 3/4899 | 12/12 | 2.3k to 13.8k |
+| 4 | 2/4899 | 12/12 | 2.4k to 15.9k |
+| 6 | 0/4899 | 12/12 | 2.6k to 16.3k |
+| 8 | 0/4899 | 12/12 | 3.6k to 16.7k |
+| 12 | 0/4899 | 11/12 | 4.3k to 17.3k |
+| 16 | 0/4899 | 9/12 | 4.8k to 18.0k |
+
+The loops missed at 12 and 16 are captures another guard had cut short. The most a healthy block
+said its second line was 5 times ("This is correct." 6, "Correct." 5). In the saved sessions the
+most was 2. N = 8 shipped as the `circle` guard, `src/subagent/guards/circle.ts`, thinking blocks
+only. The shipped code replayed in 7 character deltas (`night/circle-replay.ts`): 0 of 4,899
+healthy blocks, 12 of 12 loops, stops at 3.6k to 16.7k characters. The repeat guard on the same 12:
+6.1k to 37.4k. The line splitting moved to `guards/lines.ts`, shared with the repeat guard. The
+old and the new repeat guard gave the same trips on 20,000 random event streams (a reviewer's
+check).
+
+Live, Gemma, whole flow on mx5, 30 sessions: circle fired 5 times, each in a questions turn, and
+every session ended with a valid plan. The two captured trips were loops ("I'll
+start." 8, "I'll do it." 8; "I'll check if there's anything else about the invite link." 8,
+"No." 10). On Qwen it fired 0 times in 58 sessions.
+
+32 mutants of the guard and the line reader, 32 killed (`night/mutate.py`).
+
+Left as is: a walk over eight items that ends each on the same two verdict lines trips it, none
+was seen. A run that ends at the output limit with no thinking loop was not captured: the hint
+text is the repeat guard's with a new first sentence, and what follows a trip was seen 5 times.
+
+### Goal turn on Gemma, not shipped
+
+Shipped code, Gemma, whole flow, five mx5 requests, 30 sessions: 26 plans. All four lost sessions
+died in the goal turn, killed by the loop guard. Past the goal turn steps were valid 26/26 and the
+change 26/26. The captures show why: after reading the design document the model plans to write
+the code ("I'll write the file."), has no tool for it, and rereads.
+
+`night/goal-probe.ts`, the goal turn alone, three requests, arms in turn each round. One line
+added to the goal prompt:
+
+| Arm | Sessions | Goal | No guard restart | Tool turns per session | All sessions took |
+|---|---|---|---|---|---|
+| G0 shipped | 45 | 43 | 30 | 16.4 | 28 min |
+| G1 "You do not do the task. Do not plan it and do not write code." after line 1 | 45 | 45 | 42 | 8.2 | 11 min |
+| G2 "You are planning, not implementing. Do not change any file." after line 1 | 15 | 13 | 10 | 22.5 | 11 min |
+| G3 "Someone else does the task after you. You only name the goal." after line 2 | 45 | 45 | 44 | 3.6 | 4 min |
+
+No restart, G0 against G3: Fisher p = 0.0002. The planning line of the accept message does not
+help here. G3 goals name less of the design document.
+
+Whole flow with G3 and the circle guard, Gemma, 30 sessions: 30 plans, change valid 30/30, 28
+minutes against 51. Questions asked 36 against 24. The guard restarts moved to the questions turn
+and every one recovered.
+
+Qwen, goal turn alone, 12 sessions per arm: G0 12/12, G3 12/12, 4.0 and 4.1 tool turns. Qwen,
+whole flow, three requests, 9 sessions per arm, arm P shipped, arm Q with G3 and description B
+below: P 9 plans, 1 guard restart, steps turn 38 s on average; Q 8 plans, 6 restarts, 128 s. The
+restarts on both arms are the late `ask_user` below, so the arms cannot be told apart yet. G3 is
+not in `src/`. Open: P against Q again once the late `ask_user` is fixed, one change per arm.
+
+### `ask_user` after the questions, not fixed
+
+Recorded on Qwen: in the steps turn the model wrote the steps and called `ask_user` in one
+message. The tool answered "Not asking yet. Give the GOAL line.", the text meant for the goal turn.
+The model then answered `GOAL: ...` and asked again. Each refusal is an error, so eight of them trip
+the ground guard, and a `GOAL:` reply is sent back as a bad layout. This is the `GOAL:` line that
+section 14 counted in 11 of 14 send backs.
+
+Qwen, shipped code, whole flow, 13 sessions: 3 had a restart in the steps turn. With G3: 4 of 9,
+one plan lost on a `GOAL:` reply.
+
+`night/refuse-batch.sh`: goal then steps with no questions turn, so open points are left. Qwen:
+
+| Arm | Sessions | Steps valid | Sessions with a late `ask_user` | Late calls | Restarts in the steps turn |
+|---|---|---|---|---|---|
+| R0 shipped refusal | 10 | 8 | 4 | 9 | 3 |
+| R1 "The questions are done. Decide this yourself." | 5 | 5 | 2 | 5 | 2 |
+| R2 "The questions are done. Decide this yourself and give the steps." | 5 | 5 | 1 | 1 | 0 |
+| R3 `ask_user` taken out of the tool list for the steps turn | 14 | 13 | 0 | 0 | 1 |
+
+R3 is the owner's idea. It empties the cache once: the first request of the steps turn read 6.2k
+tokens fresh at the median, 9.6k at most, and 7,541 tokens took 4.4 s. Every later request was
+cached again. The one R3 session lost and one of the two R0 sessions lost hit the probe's 600 s
+limit while a second batch shared the server, from 07:11 to 07:42, so no time in this table can be
+compared. Too few sessions to pick. Nothing is in `src/`: a version with R1 was built, tested and
+taken out again.
+
+Open: R0, R2 and R3 with one batch on the server, 30 sessions each. R3 in the goal turn too, where
+Qwen called the tool in 7 of 50 sessions (section 10). The prefill on a session of 40k tokens.
+
+### An option like "Other", not shipped
+
+The scripted users of the older probes pick option 1, so they never met it. An option that is no
+answer ("Other (please specify)", "Something else — let me describe it"):
+
+| | Questions | With such an option |
+|---|---|---|
+| Qwen, logs before tonight | 276 | 36 |
+| Gemma, logs before tonight | 650 | 54 |
+| Gemma tonight, shipped description | 78 | 17 |
+| Gemma tonight, B: shipped + "The user can also type an answer, so give no option like "Other"." | 13 | 0 |
+| Qwen tonight, shipped description | 25 | 0 |
+| Qwen tonight, B | 29 | 1 |
+
+Picked, Gemma asks the same thing again with the same kind of option, four times in one session.
+Qwen went on and guessed. B is not shown to help. Not built.
+
+### Review
+
+One blind round by a second model on the tracker and the guard. No fault in the code. Its limits
+are in the lists above. One mutant of its own lived: a reset of the circle counts on a text start
+too, which no input from this server reaches.
+
+Not measured: the stale goal after a steps change on the main model (`night/contra-run.ts` is
+written and was not run), the circle hint against any other wording, anything tonight on a second
+repo.
+
+## 16. A second night on a real repo, measured
+
+2026-10-05 to 06, pi 1.0.3, Qwen 3.8 27B. `~/hub/mx5`, branch `night2` from "night base", one
+commit per run. Real TUI in tmux, driven by a script that picks row 1. Harness: `harness/night2/`.
+
+### Real TUI
+
+| Run | Request | Questions | Steps | Plan files | Footer, shipped | Tests after |
+|---|---|---|---|---|---|---|
+| 1 | Add login, logout and me from DESIGN/PROJECT.md. No database yet, keep users and sessions in memory. | 0 | 7 | 7 | 5/7 | 29 pass |
+| 2 | Add an image pipeline as in DESIGN/PROJECT.md section 7: a function that takes an upload and returns full and thumb webp. With tests. | 0 | 4 | 3 | 2/3 | 34 pass |
+| 3 | Admin should be able to ban a member. | 1 | 4 | 4 | 4/4 | 39 pass |
+| 4 | Limit login attempts with the hono-rate-limiter package instead of the hand-made limit. | 0 | 4 | 4 | 4/4, with the stamps below | 39 pass |
+| 5 | Build the listings feature end to end from DESIGN/PROJECT.md: routes, photos, search, sort, pagination, owner checks, sold. In memory, no database. | 0 | 7 | 7 | 7/7 | 71 pass |
+| 6 | Add the admin users list from DESIGN/PROJECT.md section 5, with the listing count per user. With tests. | 0 | 4 | 4 | 4/4, every change of tonight in | 74 pass |
+| 7 | Add a contact reveal endpoint for listings, as in DESIGN/PROJECT.md section 5. | 0 | 3 | 1 | 1/1 | 76 pass |
+
+Run 7: the endpoint was there, and the goal said so. A typed goal change ("Only add the missing
+test") gave a goal for one 404 test. A typed steps change added a 401 test to the steps; the goal
+on screen and in the hand over still named the 404 test alone. The main agent wrote both tests, as
+in section 15: the steps win, 2 of 2 seen.
+
+Run 5's plan was 24 rows and the panel showed each step on one line. Qwen asked a question in 1
+of 6 runs.
+
+"Fix the bug in the payment module.", a module the repo does not have: the goal turn wrote "Fix
+the bug in the payment module so payments process correctly without errors." The first question
+said that no such module is there and asked what was meant. Two of its four options were no answer
+("I meant a different file/module — I'll name it").
+
+### A plan file a command writes
+
+Runs 1 and 2 ended with every step done and the footer short: `package.json` and `bun.lock` were
+plan files and the main agent changed them with `bun add`, a bash call. In the 102 plans logged on
+mx5 last night 47 list a `package.json`.
+
+Now hand over saves a stamp per FILES row, the file's change time and size or nothing when it is
+not on disk (`stamps` in `src/plan/track.ts`, `disk` in the plan entry). A row whose stamp differs
+counts as written, and the count also runs when a bash call ends. Run 4 listed `package.json` and
+`bun.lock`, the main agent ran `bun add`, and the footer ended 4/4. 18 mutants of the lines, 18
+killed (`night2/mutate.py`). Three blind review rounds. Round 1: a new request typed while hand
+over reads the disk sent the old plan, now dropped. Round 2: a reload in that wait left a pi that
+throws, now caught, and no test pinned the time half of the stamp. Round 3: no fault in the code.
+
+Left as is: a codemode script's end starts no count. A tree move back to the hand over still shows the files the other branch changed,
+since the disk does not move back. A folder row sees a command only when it adds or removes an
+entry right inside the folder. A file rewritten with the same content counts (`git stash` and
+`pop`). An entry saved before the stamps counts calls only.
+
+### `ask_user` after the questions, 30 sessions per arm
+
+The open rows of section 15, one batch alone on the server. `night/refuse-batch.sh q2refuse 10
+"R0 R2 R3"` with the shipped goal prompt: goal, then steps with no questions turn, then one change.
+mx5 on "night base". Logs `runs/night/q2refuse-*`.
+
+Qwen:
+
+| Arm | Sessions | Steps valid | Change valid | Sessions with a late `ask_user` | Late calls | Sessions with a restart | Steps plus change, median |
+|---|---|---|---|---|---|---|---|
+| R0 shipped refusal | 40 | 40 | 40 | 9 | 16 | 9 | 62 s |
+| R2 "The questions are done. Decide this yourself and give the steps." | 30 | 30 | 30 | 9 | 17 | 1 | 36 s |
+| R3 `ask_user` out of the tool list | 30 | 30 | 30 | 0 | 0 | 0 | 43 s |
+
+Restarts, R0 against R2: Fisher p = 0.04. R0 against R3: p = 0.008. Every late call of R0 was in the listings request, 9 of 20 sessions. With R2 it came in all three requests. After
+a late call the steps turn went on with no restart in 1 of 9 sessions with R0 and 8 of 9 with R2.
+R3 read 2.8k tokens fresh at the median on the first request of the steps turn, 8.7k at most. R0
+and R2 read 103.
+
+Ten of the R0 listings sessions came from a probe left over from a start on the wrong branch. It
+ran beside the batch until 22:59, so the R0 time is not clean. The counts stand.
+
+Gemma, same batch, logs `runs/night/g2refuse-*`:
+
+| Arm | Sessions | Goal | Steps valid | Change valid | Sessions with a late `ask_user` |
+|---|---|---|---|---|---|
+| R0 | 30 | 24 | 24 | 24 | 0 |
+| R2 | 30 | 24 | 23 | 23 | 0 |
+| R3 | 30 | 27 | 26 | 26 | 0 |
+
+Gemma never called `ask_user` after the questions, so no arm shows it anything. Its losses are the
+goal turn of section 15 again: 15 of 90 sessions died there with the shipped goal prompt.
+
+R2 went into `src/` first. The whole flow below, with the questions turn, showed the model
+calling `ask_user` eight times in a row past the R2 refusal, 5 restarts in 30 sessions. So R3 is
+what shipped: `subagentSession.prompt` takes the names of tools to leave out, the session's
+active tools are set before each turn, and the steps turn runs without `ask_user`
+(`src/subagent/subagent.ts`, `src/plan/plan.ts`). A goal turn call still gets "Not asking yet".
+10 mutants, 10 killed.
+
+### Goal line G3 on Qwen, whole flow
+
+`night2/goal-ab.sh q2goal 5`: the five-request flow of section 15 with the R2 refusal, arm P the
+shipped goal prompt, arm Q with the G3 line, three requests, 5 sessions per cell:
+
+| Arm | Sessions | Goal | Steps valid | Change valid | Questions | Sessions with a late `ask_user` | Guard restarts in the steps turn |
+|---|---|---|---|---|---|---|---|
+| P shipped | 15 | 15 | 15 | 15 | 27 | 3 | 3 |
+| Q G3 | 15 | 15 | 15 | 15 | 21 | 4 | 2 |
+
+Qwen does not tell the arms apart, as in the goal turn alone (12/12 each). Gemma did, in section
+15: 45/45 against 43/45 goals, 44 against 30 sessions with no guard restart, p = 0.0002, and the
+whole flow 30/30. G3 is now the third line of the goal prompt in `src/plan/goal.ts`.
+
+### Gemma in the real TUI, Try again
+
+Gemma 4 12B, `night2` after the five Qwen runs, "Add a logout-everywhere action that ends all
+sessions of the current user. With a test." The goal turn was killed by the loop guard twice, after
+its restarts. The third run gave a goal in 30 s, one question, three steps, three files, footer
+3/3, 71 tests passing.
+
+With the G3 line, two more Gemma runs on `night2`: "Sellers should be able to delete one of
+their photos. The remaining photos keep their order." gave a goal in 51 s with no kill, two
+"verify" steps since run 5 had built it, and the main agent ran the tests and changed nothing,
+footer 0/2. "Members can change their display name. With a test." gave a goal in 3 s, the
+questions turn was killed by the loop guard once and "Ask questions" ran it again, then four
+steps, 4/4, and the main agent broke one older test (77 tests, 1 fail). Gemma wrote `npm test` as
+the VERIFY row of the first plan, on a bun repo.
+
+After the kill the panel showed "Type what you want done." and the request was gone: the first
+goal run saves nothing, so a failed one left the user to type it again. Now the panel keeps the
+request and the error and offers a "Try again" row, which runs the same request once more; typed
+text is a new request. The panel forgets the request when it closes or the session changes. 9
+mutants, 9 killed. Two blind review rounds: the first found the row missing after a reply with no
+GOAL line, and an older failed request shown after a later one; the second found no fault.
+
+### Review and open
+
+Blind review rounds by a second model: three on the stamps, two on Try again, one on the tool
+removal. The last round of each found no fault in the code.
+
+Open: the stale goal after a typed steps change (section 15) is not measured; `night/contra-run.ts`
+is still unrun. A handed plan longer than the screen shows counts only. An option that is no answer
+("I meant a different file/module — I'll name it") is still offered, 2 of 4 options in the payment
+question. Gemma's goal turn with G3 on a real repo was measured last night only through the probe,
+not in the TUI. mx5 is left on `night2` with six Qwen runs and one Gemma run committed; the server
+runs Qwen.
 

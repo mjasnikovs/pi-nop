@@ -7,12 +7,16 @@ import {goalTask} from './goal'
 
 const stepsLabel = 'STEPS:'
 const filesLabel = 'FILES:'
+const verifyLabel = 'VERIFY:'
+const labels = [stepsLabel, filesLabel, verifyLabel]
 const stepsLayout = `${stepsLabel}
 1. <one line per step>
 ${filesLabel}
-- <path> (existing|new)`
+- <path> (existing|new)
+${verifyLabel}
+- <the project's test command, nothing else on the line>`
 
-// Every string the model sees here was measured as written (PLANNING_MODE.md, section 12).
+// Every string the model sees here was measured as written (PLANNING_MODE.md, sections 12, 14).
 const stepsRules = `The questions are done.
 You are planning, not implementing. Do not change any file.
 Now plan the steps that reach the goal, in order. Read the code you need.
@@ -25,7 +29,7 @@ const note = (text: string): string =>
 const layoutNote = note('Your reply did not follow the layout, so it was not accepted.')
 
 type PlanFile = {path: string; state: 'existing' | 'new'}
-type Steps = {steps: string[]; files: PlanFile[]}
+type Steps = {steps: string[]; files: PlanFile[]; verify: string[]}
 
 const misplacedNotes: Record<PlanFile['state'], (path: string) => string> = {
     existing: path =>
@@ -45,6 +49,30 @@ const fileOf = (row: string): PlanFile | undefined => {
     return path.includes('*') ? undefined : {path: path.trim(), state}
 }
 
+// The space keeps a row like --coverage whole.
+const dash = /^-(?:\s+|$)/
+const wrapped = /^`([^`]*)`$/
+const noCommand = /^(?:none|\(none\))?$/i
+const fence = '```'
+// Qwen ends a reply on a leaked closing tag, whole or cut: </parameter>, </tool_call>, </
+const closingTag = /^<\/[\w-]*>?$/
+const undashed = (row: string): string => row.replace(dash, '')
+const notCommand = (row: string): boolean =>
+    labels.includes(unmarked(row)) || undashed(row).startsWith(fence)
+
+// A bare row beside dashed ones is text after the commands, not one more command.
+const mixed = (rows: string[]): boolean => {
+    const dashed = rows.filter(row => dash.test(row)).length
+
+    return dashed > 0 && dashed < rows.length
+}
+
+const commandOf = (row: string): string => {
+    const bare = undashed(row)
+
+    return (wrapped.exec(bare)?.[1] ?? bare).trim()
+}
+
 const parseSteps = (text: string): Steps | undefined => {
     const rows = text
         .split('\n')
@@ -52,19 +80,23 @@ const parseSteps = (text: string): Steps | undefined => {
         .filter(row => row !== '')
     const start = rows.findIndex(row => unmarked(row) === stepsLabel)
     const end = rows.findIndex((row, index) => index > start && unmarked(row) === filesLabel)
+    const last = rows.findIndex((row, index) => index > end && unmarked(row) === verifyLabel)
 
-    if (start === -1 || end === -1) return undefined
+    if (start === -1 || end === -1 || last === -1) return undefined
 
     // A step keeps its backticks and stars: `export * from` must reach the main model whole.
     const steps = rows.slice(start + 1, end).map(row => stepRow.exec(row)?.[1])
-    const files = rows.slice(end + 1).map(fileOf)
+    const files = rows.slice(end + 1, last).map(fileOf)
+    const commands = rows.slice(last + 1).filter(row => !closingTag.test(row))
     const read = {
         steps: steps.filter(step => step !== undefined),
-        files: files.filter(file => file !== undefined)
+        files: files.filter(file => file !== undefined),
+        verify: commands.map(commandOf).filter(command => !noCommand.test(command))
     }
 
     if (read.steps.length === 0 || read.steps.length < steps.length) return undefined
-    return read.files.length < files.length ? undefined : read
+    if (read.files.length < files.length || commands.some(notCommand)) return undefined
+    return mixed(commands) ? undefined : read
 }
 
 const onDisk = async (
@@ -109,13 +141,18 @@ const sendBackSteps =
         return wrong === undefined ? undefined : misplacedNotes[wrong.state](wrong.path)
     }
 
-const stepsText = ({steps, files}: Steps): string => {
+// No label for an empty list: a plan saved before the part hands over as it did.
+const verifyText = (verify: string[]): string[] =>
+    verify.length === 0 ? [] : [verifyLabel, ...verify.map(command => `- ${command}`)]
+
+const stepsText = ({steps, files, verify}: Steps): string => {
     if (steps.length === 0) return ''
     return [
         stepsLabel,
         ...steps.map((step, index) => `${String(index + 1)}. ${step}`),
         filesLabel,
-        ...files.map(({path, state}) => `- ${path} (${state})`)
+        ...files.map(({path, state}) => `- ${path} (${state})`),
+        ...verifyText(verify)
     ].join('\n')
 }
 

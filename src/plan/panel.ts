@@ -41,6 +41,7 @@ type PanelState = Steps & {
 type Action =
     | 'change'
     | 'accept'
+    | 'retry'
     | 'answer'
     | 'ask'
     | 'plan'
@@ -56,6 +57,7 @@ type Row = SelectItem & {action: Action; text: string}
 const row = (action: Action, label: string): Row => ({value: action, label, action, text: ''})
 const rows = {
     accept: row('accept', 'Accept the goal'),
+    retry: row('retry', 'Try again'),
     ask: row('ask', 'Ask questions'),
     plan: row('plan', 'Plan steps'),
     finish: row('finish', 'Finish questions'),
@@ -77,7 +79,9 @@ const optionRows = (question: Question): Row[] =>
     }))
 
 const menuFor = (state: PanelState): Row[] => {
-    if (state.running || state.goal === undefined) return []
+    if (state.running) return []
+    // A request with no goal and no run is one whose run failed.
+    if (state.goal === undefined) return state.request === undefined ? [] : [rows.retry, rows.close]
     if (state.handed) return [rows.stop, rows.close]
     if (state.question !== undefined)
         return [...optionRows(state.question), rows.finish, rows.changeGoal, rows.close]
@@ -216,28 +220,27 @@ const fileCount = ({files, progress}: Planned): string[] => {
     return [`Files: ${String(progress.written)}/${String(progress.total)}`, ...outside]
 }
 
-const outsideRows = (theme: Theme, outside: string[], width: number): string[] => {
-    if (outside.length === 0) return []
-    return [
-        '',
-        theme.fg('accent', theme.bold('OUTSIDE')),
-        ...outside.flatMap(path => wrapTextWithAnsi(shown(path), width))
-    ]
-}
+const titled = (theme: Theme, title: string, lines: string[]): string[] =>
+    lines.length === 0 ? [] : ['', theme.fg('accent', theme.bold(title)), ...lines]
 
-const fileList = (theme: Theme, plan: Planned, width: number): string[] => {
-    if (plan.files.length === 0) return []
-    return [
-        '',
-        theme.fg('accent', theme.bold('FILES')),
-        ...plan.files.flatMap(({path, state}, index) =>
+const outsideRows = (theme: Theme, outside: string[], width: number): string[] =>
+    titled(
+        theme,
+        'OUTSIDE',
+        outside.flatMap(path => wrapTextWithAnsi(shown(path), width))
+    )
+
+const fileList = (theme: Theme, plan: Planned, width: number): string[] =>
+    titled(
+        theme,
+        'FILES',
+        plan.files.flatMap(({path, state}, index) =>
             wrapTextWithAnsi(
                 `${fileMark(theme, plan.progress?.files[index])}${shown(path)} ${theme.fg('dim', `(${state})`)}`,
                 width
             )
         )
-    ]
-}
+    )
 
 const fileRows = (theme: Theme, plan: Planned, width: number, counted: boolean): string[] => {
     const counts = fileCount(plan)
@@ -265,14 +268,26 @@ const stepCount = ({steps: planSteps, progress}: Planned): string => {
     return `${count} · done ${String(progress.steps.filter(mark => mark === 'done').length)}`
 }
 
+const verifyRows = (theme: Theme, verify: string[], width: number): string[] =>
+    titled(
+        theme,
+        'VERIFY',
+        verify.flatMap(command => wrapTextWithAnsi(`- ${shown(command)}`, width))
+    )
+
 const planned = (theme: Theme, plan: Planned, width: number, compact: Compact): string[] => {
     if (plan.steps.length === 0) return []
-    if (compact.stepCount) return [stepCount(plan), ...fileCount(plan)]
+
+    // No stage cuts the commands: the main agent runs them, so the user sees them whole first.
+    const verify = verifyRows(theme, plan.verify, width)
+
+    if (compact.stepCount) return [stepCount(plan), ...fileCount(plan), ...verify]
     return [
         '',
         theme.fg('accent', theme.bold('STEPS')),
         ...stepRows(theme, plan, width, compact.steps),
-        ...fileRows(theme, plan, width, compact.files)
+        ...fileRows(theme, plan, width, compact.files),
+        ...verify
     ]
 }
 
@@ -341,6 +356,7 @@ class PlanPanel implements Focusable {
         decisions: [],
         steps: [],
         files: [],
+        verify: [],
         running: false,
         status: ''
     }
@@ -516,7 +532,8 @@ class PlanPanel implements Focusable {
     }
 
     private typeHint(): string {
-        return this.state.question === undefined ? 'type to change' : 'type your answer'
+        if (this.state.question !== undefined) return 'type your answer'
+        return this.state.goal === undefined ? 'type a new request' : 'type to change'
     }
 
     private status(width: number, room: number): string[] {

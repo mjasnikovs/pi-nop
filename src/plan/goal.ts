@@ -3,6 +3,7 @@ const goalLayout = `${goalLabel} <one sentence, what changes for the user>`
 
 const goalPrompt = `You turn a request into one goal sentence for a coding task.
 Read a file only when the request names something you must check.
+Someone else does the task after you. You only name the goal.
 Answer with one line and nothing else:
 ${goalLayout}`
 
