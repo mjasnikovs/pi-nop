@@ -57,6 +57,14 @@ dropped. The command is not checked and `/plan` never runs it. Hand over sends i
 The panel keeps it whole while steps and files shrink to counts. On a screen too short even for
 that, the panel is cut from the top.
 
+## Plan edit
+
+"Edit plan" opens the steps, files and commands in pi's editor before hand over. Ctrl+G there opens
+your external editor. The edit goes through the same checks as the steps reply: the layout, and
+each file tag against the disk. A refused edit comes back with your text and the reason in the
+title. Esc or an empty text drops it. A saved edit ends the planning session, so a later change
+starts a fresh one that gets the edited steps.
+
 ## Plan tracking
 
 After hand over of a plan with steps `/plan` tracks it. The footer shows `plan: files 3/4 · outside

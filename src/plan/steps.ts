@@ -156,6 +156,10 @@ const stepsText = ({steps, files, verify}: Steps): string => {
     ].join('\n')
 }
 
+// parseSteps refuses text with no VERIFY label, so an edit keeps it even with no command.
+const editText = (plan: Steps): string =>
+    plan.verify.length === 0 ? `${stepsText(plan)}\n${verifyLabel}` : stepsText(plan)
+
 /** head is what a fresh session must be told first; a session that knows the goal gets none. */
 const stepsTask = (head: string[], current: Steps, change?: string): string => {
     const asked = change === undefined ? [] : [goalTask({change})]
@@ -168,6 +172,7 @@ const stepsTask = (head: string[], current: Steps, change?: string): string => {
 }
 
 export {
+    editText,
     layoutNote,
     misplaced,
     parseSteps,

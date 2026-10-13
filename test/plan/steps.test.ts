@@ -3,6 +3,7 @@ import {execFileSync} from 'node:child_process'
 import {chmodSync} from 'node:fs'
 
 import {
+    editText,
     layoutNote,
     misplaced,
     parseSteps,
@@ -346,6 +347,27 @@ describe('stepsText', () => {
     test('no command is no VERIFY part, and each command gets a dash', () => {
         expect(stepsText({...plan, verify: []})).toBe(reply.slice(0, -tail.length))
         expect(stepsText({...plan, verify: ['npm test', 'bun test']})).toBe(`${reply}\n- bun test`)
+    })
+})
+
+describe('editText', () => {
+    test('is the hand over text while there are commands', () => {
+        expect(editText(plan)).toBe(stepsText(plan))
+    })
+
+    test('keeps the VERIFY label with no command, so the text parses back', () => {
+        const none = {...plan, verify: []}
+        expect(editText(none)).toBe(`${stepsText(none)}\nVERIFY:`)
+        expect(parseSteps(editText(none))).toEqual(none)
+    })
+
+    test('gives back backticks, stars, numbered steps and wrapped commands', () => {
+        const marked = {
+            steps: ['Add `export * from` to **index.ts**.', '1) Keep the old step number.'],
+            files: [existing('src/index.ts')],
+            verify: ['bun test --coverage', 'npm run `lint`']
+        }
+        expect(parseSteps(editText(marked))).toEqual(marked)
     })
 })
 

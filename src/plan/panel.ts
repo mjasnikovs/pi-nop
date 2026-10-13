@@ -48,6 +48,7 @@ type Action =
     | 'finish'
     | 'changeGoal'
     | 'handOver'
+    | 'edit'
     | 'stop'
     | 'close'
     | 'leave'
@@ -63,6 +64,7 @@ const rows = {
     finish: row('finish', 'Finish questions'),
     changeGoal: row('changeGoal', 'Change goal'),
     handOver: row('handOver', 'Send to main context'),
+    edit: row('edit', 'Edit plan'),
     stop: row('stop', 'Stop tracking'),
     close: row('close', 'Close')
 }
@@ -88,7 +90,7 @@ const menuFor = (state: PanelState): Row[] => {
     if (!state.accepted) return [rows.accept, rows.handOver, rows.close]
     if (!state.asked) return [rows.ask, rows.handOver, rows.changeGoal, rows.close]
     if (state.steps.length === 0) return [rows.plan, rows.handOver, rows.changeGoal, rows.close]
-    return [rows.handOver, rows.changeGoal, rows.close]
+    return [rows.handOver, rows.edit, rows.changeGoal, rows.close]
 }
 
 const sameRows = (left: Row[], right: Row[]): boolean =>

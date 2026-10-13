@@ -33,6 +33,7 @@ const change = mock((_text: string) => undefined)
 const accept = mock((_text: string) => undefined)
 const retry = mock((_text: string) => undefined)
 const handOver = mock((_text: string) => undefined)
+const edit = mock((_text: string) => undefined)
 const close = mock((_text: string) => undefined)
 const leave = mock((_text: string) => undefined)
 const answer = mock((_text: string) => undefined)
@@ -52,6 +53,7 @@ const actions = {
     finish,
     changeGoal,
     handOver,
+    edit,
     stop,
     close,
     leave
@@ -293,7 +295,25 @@ describe('PlanPanel', () => {
 
             panel.handleInput(down)
             panel.handleInput(enter)
+            expect(edit).toHaveBeenCalledTimes(1)
+
+            panel.handleInput(down)
+            panel.handleInput(enter)
             expect(changeGoal).toHaveBeenCalledTimes(1)
+        })
+
+        test('Edit plan shows only for steps not yet handed', () => {
+            panel.setState(state(planned))
+            expect(panel.render(width).join('\n')).toContain(rows.edit.label)
+
+            panel.setState(state({...planned, handed: true}))
+            expect(panel.render(width).join('\n')).not.toContain(rows.edit.label)
+
+            panel.setState(state({...planned, steps: [], files: []}))
+            expect(panel.render(width).join('\n')).not.toContain(rows.edit.label)
+
+            panel.setState(state({...planned, asked: false}))
+            expect(panel.render(width).join('\n')).not.toContain(rows.edit.label)
         })
 
         test('the commands show last, each with a dash, wrapped and with no escape codes', () => {
@@ -786,13 +806,13 @@ describe('PlanPanel', () => {
     })
 
     test('other rows, even as many, put the highlight back', () => {
-        const goal = {goal: 'Fix the typo.'}
-        panel.setState(state({...goal, accepted: true, asked: true, steps: ['Fix greet.']}))
+        const goal = {goal: 'Fix the typo.', accepted: true}
+        panel.setState(state({...goal, asked: true, steps: ['Fix greet.']}))
         panel.handleInput(down)
         panel.setState(state(goal))
         panel.handleInput(enter)
 
-        expect(accept).toHaveBeenCalledTimes(1)
+        expect(ask).toHaveBeenCalledTimes(1)
         expect(handOver).not.toHaveBeenCalled()
     })
 

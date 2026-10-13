@@ -59,7 +59,10 @@ await mock.module('@earendil-works/pi-coding-agent', () => ({
 const {
     default: register,
     closeTitle,
+    editTitle,
     keepLabel,
+    layoutTitle,
+    misplacedTitles,
     noGoalLine,
     noStepsLine,
     stopLabel,
@@ -111,6 +114,10 @@ const custom = mock((factory: Factory, options: Options) => {
 const select = mock((_title: string, _options: string[]) =>
     Promise.resolve<string | undefined>(stopLabel)
 )
+// Throws once its script runs out, so an edit that never stops reopening fails the test.
+const editor = mock((_title: string, _text?: string): Promise<string | undefined> => {
+    throw new Error('no scripted edit')
+})
 const notify = mock((_text: string, _level: string) => undefined)
 const setStatus = mock((_key: string, _text: string | undefined) => undefined)
 const entries: {type: string; customType?: string; data?: unknown}[] = []
@@ -118,7 +125,7 @@ const cwd = tempTree({'src/greet.js': 'x', 'README.md': 'x'})
 const ctx = {
     cwd,
     mode: 'tui',
-    ui: {custom, notify, select, setStatus, theme},
+    ui: {custom, editor, notify, select, setStatus, theme},
     sessionManager: {getBranch: () => entries}
 } as unknown as ExtensionContext & ExtensionCommandContext
 
@@ -189,7 +196,7 @@ beforeEach(() => {
     panel = undefined
     closed = false
     const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
-    for (const fn of [...fakes, select, setHidden, setStatus]) fn.mockClear()
+    for (const fn of [...fakes, editor, select, setHidden, setStatus]) fn.mockClear()
     register(pi)
 })
 // A steps run still checking the disk would save into the next test.
@@ -1153,10 +1160,218 @@ describe('/plan', () => {
 
         test('change goal drops the steps', async () => {
             await withSteps()
-            pick(1)
+            pick(2)
 
             expect(lastEntry()).toEqual({...goalEntry, accepted: false})
             expect(screen()).not.toContain('STEPS')
+        })
+
+        describe('edit', () => {
+            const edited = [
+                'STEPS:',
+                '1. Fix greet.',
+                '2. Add a test.',
+                'FILES:',
+                '- src/greet.js (existing)',
+                '- test/greet.test.js (new)',
+                'VERIFY:',
+                '- npm test'
+            ].join('\n')
+            const broken = 'STEPS:\nFix greet.\nFILES:\nVERIFY:'
+            const shownAgain = () => until(() => setHidden.mock.calls.length === 2)
+
+            const edits = (...texts: (string | undefined)[]) => {
+                for (const text of texts) editor.mockResolvedValueOnce(text)
+            }
+            test('a valid edit is saved, shown, and closes the subagent', async () => {
+                await withSteps()
+                edits(edited)
+                pick(1)
+                await shownAgain()
+
+                expect(editor.mock.calls).toEqual([[editTitle, stepsReply]])
+                expect(setHidden.mock.calls).toEqual([[true], [false]])
+                expect(dispose).toHaveBeenCalledTimes(1)
+                expect(lastEntry()).toMatchObject({
+                    steps: ['Fix greet.', 'Add a test.'],
+                    files: [
+                        {path: 'src/greet.js', state: 'existing'},
+                        {path: 'test/greet.test.js', state: 'new'}
+                    ]
+                })
+                expect(screen()).toContain('2. Add a test.')
+            })
+
+            test('esc and steps left as they were keep the session', async () => {
+                await withSteps()
+                edits(undefined)
+                pick(1)
+                await shownAgain()
+                edits(stepsReply)
+                pick(0)
+                await until(() => setHidden.mock.calls.length === 4)
+
+                expect(dispose).not.toHaveBeenCalled()
+            })
+
+            test.each([
+                [
+                    'steps',
+                    stepsReply.replace('Fix greet.', 'Fix greet now.'),
+                    {steps: ['Fix greet now.']}
+                ],
+                [
+                    'files',
+                    stepsReply.replace('src/greet.js', 'README.md'),
+                    {files: [{path: 'README.md', state: 'existing'}]}
+                ],
+                ['commands', `${stepsReply}\n- bun test`, {verify: ['npm test', 'bun test']}]
+            ])('an edit of the %s alone is saved', async (_part, text, changed) => {
+                await saved(planned)
+                edits(text)
+                pick(1)
+                await shownAgain()
+
+                expect(lastEntry()).toEqual({
+                    ...goalEntry,
+                    accepted: true,
+                    asked: true,
+                    ...planned,
+                    ...changed
+                })
+            })
+
+            test('a change after an edit goes to a fresh session with the edited steps', async () => {
+                await withSteps()
+                edits(edited)
+                pick(1)
+                await shownAgain()
+                type('no test')
+                panel?.handleInput(enter)
+                await until(() => prompt.mock.calls.length === 4)
+
+                expect(subagentSession).toHaveBeenCalledTimes(2)
+                expect(taskOf(-1)).toContain(`Current steps:\n${edited}\nChange asked by the user`)
+            })
+
+            test('esc and an empty text change nothing', async () => {
+                await saved(planned)
+                edits(undefined)
+                pick(1)
+                await shownAgain()
+                edits('')
+                pick(0)
+                await until(() => setHidden.mock.calls.length === 4)
+
+                expect(editor).toHaveBeenCalledTimes(2)
+                expect(appendEntry).not.toHaveBeenCalled()
+            })
+
+            test('steps left as they were are not saved, and the disk is not asked', async () => {
+                const gone = {...planned, files: [{path: 'gone.js', state: 'existing'}]}
+                await saved(gone)
+                edits('STEPS:\n\n3. Fix greet.\nFILES:\n- gone.js (existing)\nVERIFY:\n- npm test')
+                pick(1)
+                await shownAgain()
+
+                expect(editor).toHaveBeenCalledTimes(1)
+                expect(appendEntry).not.toHaveBeenCalled()
+            })
+
+            test('a plan with no command, left as it was, is not refused or saved', async () => {
+                await saved({...planned, verify: []})
+                editor.mockImplementationOnce((_title, text) => Promise.resolve(text))
+                pick(1)
+                await shownAgain()
+
+                expect(editor).toHaveBeenCalledTimes(1)
+                expect(appendEntry).not.toHaveBeenCalled()
+            })
+
+            test('a saved edit keeps the answers', async () => {
+                const decisions = [{question: 'Add a test?', answer: 'Yes'}]
+                await saved({...planned, decisions})
+                edits(edited)
+                pick(1)
+                await shownAgain()
+
+                expect(lastEntry()).toMatchObject({decisions, steps: ['Fix greet.', 'Add a test.']})
+            })
+
+            test('a broken layout comes back as typed with the reason', async () => {
+                await saved(planned)
+                edits(broken, edited)
+                pick(1)
+                await shownAgain()
+
+                expect(editor.mock.calls[1]).toEqual([layoutTitle, broken])
+                expect(lastEntry()).toMatchObject({steps: ['Fix greet.', 'Add a test.']})
+            })
+
+            test('a wrong tag comes back with the file named', async () => {
+                await saved(planned)
+                const missing = edited.replace('test/greet.test.js (new)', 'nope.js (existing)')
+                const present = edited.replace('test/greet.test.js', 'README.md')
+                edits(missing, present, undefined)
+                pick(1)
+                await shownAgain()
+
+                expect(editor.mock.calls.slice(1)).toEqual([
+                    [misplacedTitles.existing('nope.js'), missing],
+                    [misplacedTitles.new('README.md'), present]
+                ])
+                expect(appendEntry).not.toHaveBeenCalled()
+            })
+
+            test('the same broken text again is still refused', async () => {
+                await saved(planned)
+                edits(broken, broken, undefined)
+                pick(1)
+                await shownAgain()
+
+                expect(editor.mock.calls[2]).toEqual([layoutTitle, broken])
+                expect(appendEntry).not.toHaveBeenCalled()
+            })
+
+            test('the same wrong tag again is refused again, not taken as unchanged', async () => {
+                await saved(planned)
+                const missing = edited.replace('test/greet.test.js (new)', 'nope.js (existing)')
+                edits(missing, missing, undefined)
+                pick(1)
+                await shownAgain()
+
+                expect(editor.mock.calls[2]).toEqual([misplacedTitles.existing('nope.js'), missing])
+            })
+
+            test('a plan replaced while the editor was open is not overwritten', async () => {
+                await saved(planned)
+                editor.mockImplementationOnce(() => {
+                    entries.push({
+                        type: 'custom',
+                        customType: 'plan-mode',
+                        data: {...goalEntry, goal: 'Other.'}
+                    })
+                    handlers.get('session_start')?.({}, ctx)
+                    return Promise.resolve(edited)
+                })
+                pick(1)
+                await shownAgain()
+
+                expect(appendEntry).not.toHaveBeenCalled()
+            })
+
+            test('a save that throws after a reload is caught', async () => {
+                await saved(planned)
+                appendEntry.mockImplementationOnce(() => {
+                    throw new Error('stale')
+                })
+                edits(edited)
+                pick(1)
+                await shownAgain()
+
+                expect(setHidden.mock.calls).toEqual([[true], [false]])
+                expect(screen()).not.toContain('2. Add a test.')
+            })
         })
 
         test('text after the command drops the steps', async () => {

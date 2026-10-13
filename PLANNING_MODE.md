@@ -607,6 +607,16 @@ The panel shows STEPS and FILES under the answers. On a short screen each step b
 then the files a count, then the steps a count. "Plan steps" is offered when the questions are
 done and no steps are saved.
 
+"Edit plan" opens the saved steps in pi's editor (`ctx.ui.editor`; Ctrl+G opens the external
+one), with the panel hidden. The text is the hand over layout, `VERIFY:` kept with no command.
+The same parser and file check as for a reply run on it, before the hand over. A refused edit
+reopens with the user's text and a short reason in the title. An edit that parses to the saved
+steps is not saved and the disk is not read. A saved edit closes the session, so a later change
+goes to a fresh one with the edited steps under `Current steps:`. No model sees new wording, only
+the user's steps in the measured layout, so this is not measured on a model. For a plan with no
+command that fresh session is the weak path in section 14, "A repo with no tests": Gemma added a
+command in 21 of 28 change turns.
+
 Harness: `harness/steps/`, runs in `harness/runs/steps/`. `steps-probe.ts` holds its own copy of
 the strings and the parser, `steps-product.ts` runs the shipped code. Shipped goal and questions
 code in every arm, a scripted user who picks the first option, fixture repo, requests "Make the

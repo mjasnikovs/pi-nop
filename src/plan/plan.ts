@@ -5,6 +5,7 @@ import type {
     SessionEntry
 } from '@earendil-works/pi-coding-agent'
 import type {OverlayHandle} from '@earendil-works/pi-tui'
+import Value from 'typebox/value'
 
 import {boxed, frameRows} from '../config/box'
 import {configuredOptions, subagentSession} from '../subagent/subagent'
@@ -17,8 +18,8 @@ import type {AskHost, Decision, Question} from './ask'
 import {goalPrompt, goalTask, parseGoal, sendBackGoal} from './goal'
 import {PlanPanel} from './panel'
 import type {PanelActions, PanelState} from './panel'
-import {parseSteps, sendBackSteps, stepsTask, stepsText} from './steps'
-import type {Steps} from './steps'
+import {editText, misplaced, parseSteps, sendBackSteps, stepsTask, stepsText} from './steps'
+import type {PlanFile, Steps} from './steps'
 import {diskTools, progress, stamps, statusText, writes} from './track'
 import type {Progress} from './track'
 
@@ -33,6 +34,13 @@ const overlayOptions = {width: '80%'} as const
 const closeTitle = 'Close plan? A running subagent stops.'
 const keepLabel = 'Keep planning'
 const stopLabel = 'Close and stop'
+const editTitle = 'Edit plan'
+const layoutTitle =
+    'Edit plan: keep STEPS:, FILES:, VERIFY: with 1. <step>, - <path> (existing|new), - <command>'
+const misplacedTitles: Record<PlanFile['state'], (path: string) => string> = {
+    existing: path => `Edit plan: ${path} is tagged existing but is not a file on disk`,
+    new: path => `Edit plan: ${path} is tagged new but is on disk`
+}
 
 type PlanState = Steps & {
     request?: string
@@ -55,6 +63,22 @@ type Run = {
     questions: boolean
     askedThisTurn: boolean
     waiting?: {question: Question; answer: (text: string) => void}
+}
+
+const checkEdit = async (
+    cwd: string,
+    saved: Steps,
+    text: string
+): Promise<{plan: Steps} | {reason: string} | 'unchanged'> => {
+    const plan = parseSteps(text)
+
+    if (plan === undefined) return {reason: layoutTitle}
+    // Before the disk check: a file made since planning must not refuse a plan left as it was.
+    if (Value.Equal(plan, {steps: saved.steps, files: saved.files, verify: saved.verify}))
+        return 'unchanged'
+
+    const wrong = await misplaced(cwd, plan.files, undefined)
+    return wrong === undefined ? {plan} : {reason: misplacedTitles[wrong.state](wrong.path)}
 }
 
 const idle: PlanState = {
@@ -160,6 +184,22 @@ export default function (pi: ExtensionAPI) {
         }
 
         void track(ctx)
+    }
+
+    const saveEdit = (opened: PlanState, plan: Steps): void => {
+        // A restore while the edit was open replaced this plan.
+        if (state !== opened) return
+
+        closeSubagent()
+
+        // A reload while the files were checked leaves a pi that throws.
+        try {
+            save({...state, ...plan})
+        } catch {
+            return
+        }
+
+        repaint?.()
     }
 
     const stopRun = (): void => {
@@ -365,6 +405,30 @@ export default function (pi: ExtensionAPI) {
             if (answer === stopLabel) done()
         }
 
+        const editLoop = async (): Promise<void> => {
+            const opened = state
+            let prompt = editTitle
+            let text = editText(opened)
+
+            for (;;) {
+                const edited = await ctx.ui.editor(prompt, text)
+
+                if (edited === undefined || edited === '') return
+
+                const checked = await checkEdit(ctx.cwd, opened, edited)
+
+                if (checked === 'unchanged') return
+
+                if ('plan' in checked) {
+                    saveEdit(opened, checked.plan)
+                    return
+                }
+
+                prompt = checked.reason
+                text = edited
+            }
+        }
+
         return ctx.ui.custom<void>(
             (tui, theme, _keybindings, done) => {
                 const actions: PanelActions = {
@@ -396,6 +460,7 @@ export default function (pi: ExtensionAPI) {
                         done()
                         void handOver(ctx)
                     },
+                    edit: () => void whileHidden(overlay, editLoop),
                     stop: () => {
                         save(idle)
                         void track(ctx)
@@ -479,5 +544,15 @@ export default function (pi: ExtensionAPI) {
     pi.on('session_shutdown', closeSubagent)
 }
 
-export {closeTitle, keepLabel, noGoalLine, noStepsLine, stopLabel, tuiOnly}
+export {
+    closeTitle,
+    editTitle,
+    keepLabel,
+    layoutTitle,
+    misplacedTitles,
+    noGoalLine,
+    noStepsLine,
+    stopLabel,
+    tuiOnly
+}
 export type {PlanState}
