@@ -1,0 +1,41 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 145 >>
+stream
+BT /F1 11 Tf 72 740 Td (several im\255) Tj ET
+BT /F1 11 Tf 72 725 Td (portant points) Tj ET
+BT /F1 11 Tf 72 710 Td (one im\255portant line) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Length 225 >>
+stream
+/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /X def 1 begincodespacerange <00> <FF> endcodespacerange 1 beginbfchar <AD> <00AD> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000229 00000 n 
+0000000355 00000 n 
+0000000551 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+827
+%%EOF

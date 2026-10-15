@@ -86,15 +86,22 @@ const normalizeLine = (line: string): string =>
         .replace(/\s*\/+$/, '')
         .replace(/^(?:[-+]|\d+\.)\s+/, '')
 
-type Source = {
+type TextSource = {
     text: string
     /** Code: a quote must be a whole line. `string;` is in every declaration file. Prose: any run. */
     wholeLines: boolean
 }
 
+/** A source that matches a quote its own way. It takes the quote normalized. */
+type QuoteMatcher = {holds: (prose: string) => boolean}
+
+type Source = TextSource | QuoteMatcher
+
 type Quote = {line: string; prose: string; code: string}
 
 const matcher = (source: Source): ((quote: Quote) => boolean) => {
+    if ('holds' in source) return quote => source.holds(quote.prose)
+
     if (!source.wholeLines) {
         const flat = normalize(source.text)
         return quote => flat.includes(quote.prose)
@@ -140,5 +147,5 @@ const verifyAnswer = (text: string, sources: Source[]): string => {
     return text
 }
 
-export {AnswerErrors, layoutPrompt, missingFrom, parseAnswer, substantive, verifyAnswer}
-export type {Answer, Coverage, Source}
+export {AnswerErrors, layoutPrompt, missingFrom, normalize, parseAnswer, substantive, verifyAnswer}
+export type {Answer, Coverage, Source, TextSource}

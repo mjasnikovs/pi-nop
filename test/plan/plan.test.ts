@@ -122,12 +122,14 @@ const notify = mock((_text: string, _level: string) => undefined)
 const setStatus = mock((_key: string, _text: string | undefined) => undefined)
 const entries: {type: string; customType?: string; data?: unknown}[] = []
 const cwd = tempTree({'src/greet.js': 'x', 'README.md': 'x'})
-const ctx = {
-    cwd,
-    mode: 'tui',
-    ui: {custom, editor, notify, select, setStatus, theme},
-    sessionManager: {getBranch: () => entries}
-} as unknown as ExtensionContext & ExtensionCommandContext
+const freshCtx = () =>
+    ({
+        cwd,
+        mode: 'tui',
+        ui: {custom, editor, notify, select, setStatus, theme},
+        sessionManager: {getBranch: () => entries}
+    }) as unknown as ExtensionContext & ExtensionCommandContext
+let ctx = freshCtx()
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -197,11 +199,17 @@ beforeEach(() => {
     closed = false
     const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
     for (const fn of [...fakes, editor, select, setHidden, setStatus]) fn.mockClear()
+    ctx = freshCtx()
     register(pi)
 })
 // A steps run still checking the disk would save into the next test.
 afterEach(() => {
     handlers.get('session_shutdown')?.({}, ctx)
+
+    // Like pi's, a ctx kept past its session throws, so a count still running ends with the test.
+    ctx.ui.setStatus = () => {
+        throw new Error('stale ctx')
+    }
 })
 
 describe('/plan', () => {

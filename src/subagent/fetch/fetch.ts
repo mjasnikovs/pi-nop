@@ -44,9 +44,8 @@ const status = (response: Response, requested: string): string => {
     return `${response.status} ${response.statusText}${where}${wait}`
 }
 
-type Page = {
+type Page = Pick<Digest, 'text' | 'sources'> & {
     url: string
-    text: string
     /** Set when the server answered with an error status. */
     failure?: string
 }
@@ -80,7 +79,8 @@ const loadPage = async (requested: string, signal: AbortSignal | undefined): Pro
         const response = await fetchPage(target, signal)
         const url = response.url === '' ? target.url : response.url
         const failure = response.ok ? undefined : status(response, target.url)
-        const page: Digest = await digest(response).catch((error: unknown) => {
+        const page: Digest = await digest(response, signal).catch((error: unknown) => {
+            unlessAborted(signal, error)
             if (failure === undefined) throw error
             return {text: ''}
         })
@@ -89,7 +89,8 @@ const loadPage = async (requested: string, signal: AbortSignal | undefined): Pro
 
         const next = seen.size > maxRefreshes ? undefined : refreshTarget(page, target, url)
 
-        if (next === undefined || seen.has(next.url)) return {url, text: page.text}
+        if (next === undefined || seen.has(next.url))
+            return {url, text: page.text, sources: page.sources}
         target = next
     }
 }
@@ -163,8 +164,8 @@ export default function (pi: ExtensionAPI) {
 
             const task = buildTask(params.query, page.url, page.text, failure)
             assertFits(task, options.model, failure)
-            const verify = (text: string) =>
-                verifyAnswer(text, [{text: page.text, wholeLines: false}])
+            const sources = [{text: page.text, wholeLines: false}, ...(page.sources ?? [])]
+            const verify = (text: string) => verifyAnswer(text, sources)
 
             if (failure === undefined) return {task, options, verify}
             return {task, options, verify, failure: text => describeFailure(failure, text)}

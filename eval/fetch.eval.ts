@@ -326,8 +326,18 @@ const networkCases: Case[] = [
     },
     {
         name: 'unsupported-type',
-        prompt: ask('/manual.pdf', 'What does the manual say?'),
-        checks: run => [errorHas(run, 'application/pdf'), calledTimes(run, 1)]
+        prompt: ask('/manual.png', 'What does the manual say?'),
+        checks: run => [errorHas(run, 'image/png'), calledTimes(run, 1)]
+    },
+    {
+        name: 'pdf-fact',
+        prompt: ask('/manual.pdf', 'Which part number is the approved replacement filter?'),
+        checks: run => [noError(run), answerHas(run, 'VX-4471')]
+    },
+    {
+        name: 'pdf-compound-split',
+        prompt: ask('/bleed.pdf', 'What do I bleed the low-pressure fuel system with?'),
+        checks: run => [noError(run), answerHas(run, 'primer')]
     },
     {
         name: 'connection-refused',

@@ -1,3 +1,5 @@
+import {readFileSync} from 'node:fs'
+
 const port = '4817'
 const install = 'cargo install zorblax'
 const password = 'hunter2'
@@ -240,7 +242,21 @@ const routes: Record<string, (request: Request) => Promise<Response> | Response>
                 headers: {'content-encoding': 'gzip'}
             }
         ),
-    '/manual.pdf': () => typed('%PDF-1.4\n%âãÏÓ\n', 'application/pdf'),
+    '/manual.pdf': () =>
+        typed(
+            readFileSync(
+                new URL('../test/subagent/fetch/fixtures/split-code.pdf', import.meta.url)
+            ),
+            'application/pdf'
+        ),
+    '/bleed.pdf': () =>
+        typed(
+            readFileSync(
+                new URL('../test/subagent/fetch/fixtures/compound-split.pdf', import.meta.url)
+            ),
+            'application/pdf'
+        ),
+    '/manual.png': () => typed(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), 'image/png'),
     '/loop': () => redirect('/loop'),
     '/search': request =>
         new URL(request.url).search === '?a=1&b=2' ?

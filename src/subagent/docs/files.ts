@@ -1,11 +1,11 @@
 import {readdirSync, readFileSync} from 'node:fs'
 import {join, relative} from 'node:path'
 
-import type {Source} from '../answer'
+import type {TextSource} from '../answer'
 import {packages} from './locate'
 import type {Located, Package} from './locate'
 
-type CorpusFile = Source & {
+type CorpusFile = TextSource & {
     /** Package-qualified, so x and @types/x never clash. */
     label: string
     /** Absolute. */

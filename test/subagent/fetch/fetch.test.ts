@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs'
 import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
 import type {
     ExtensionAPI,
@@ -8,6 +9,7 @@ import type {
 import type {Api, Model} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
 import type {SubagentOptions, SubagentUpdate} from '../../../src/subagent/subagent'
+import {pdftotextReady} from '../../pdftotext'
 
 type FetchTool = ToolDefinition<TObject<{url: TString; query: TString}>>
 
@@ -27,12 +29,13 @@ const options = {
     model
 } as Partial<SubagentOptions>
 const configuredOptions = mock((_ctx: ExtensionContext, _tool: string) => options)
-const {SubagentErrors} = await import('../../../src/subagent/subagent')
+const {SubagentErrors, unlessAborted} = await import('../../../src/subagent/subagent')
 const {FetchErrors} = await import('../../../src/subagent/fetch/errors')
 await mock.module('../../../src/subagent/subagent', () => ({
     runSubagent,
     configuredOptions,
-    SubagentErrors
+    SubagentErrors,
+    unlessAborted
 }))
 
 const page = (body: string, url = 'https://example.com/final'): Response => {
@@ -41,6 +44,7 @@ const page = (body: string, url = 'https://example.com/final'): Response => {
     return response
 }
 
+const splitCode = readFileSync(new URL('fixtures/split-code.pdf', import.meta.url))
 const realFetch = globalThis.fetch
 const fetchMock = mock((_url: string, _init?: RequestInit) => Promise.resolve(page('page')))
 afterAll(() => {
@@ -116,6 +120,61 @@ describe('fetch tool', () => {
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
             'Subagent answer failed verification: evidence not in the source: made up | also fake'
+        )
+    })
+
+    test.skipIf(!pdftotextReady)(
+        'accepts a PDF quote that rejoins a code split at a line end',
+        async () => {
+            fetchMock.mockImplementationOnce(() =>
+                Promise.resolve(
+                    new Response(splitCode, {headers: {'content-type': 'application/pdf'}})
+                )
+            )
+            const text = 'COVERED: yes\nANSWER: VX-4471\nEVIDENCE:\npart number VX-4471.'
+            runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
+
+            const result = await tool().execute('id', params, undefined, onUpdate, ctx)
+            expect(result.content).toEqual([{type: 'text', text}])
+        }
+    )
+
+    test.skipIf(!pdftotextReady)('stops reading a PDF when the call is cancelled', async () => {
+        fetchMock.mockImplementationOnce(() =>
+            Promise.resolve(new Response(splitCode, {headers: {'content-type': 'application/pdf'}}))
+        )
+
+        await expect(
+            tool().execute('id', params, AbortSignal.abort(), onUpdate, ctx)
+        ).rejects.toThrow(SubagentErrors.Aborted)
+        expect(runSubagent).not.toHaveBeenCalled()
+    })
+
+    test.skipIf(!pdftotextReady)(
+        'a cancel while reading a PDF error page is still a cancel',
+        async () => {
+            fetchMock.mockImplementationOnce(() =>
+                Promise.resolve(
+                    new Response(splitCode, {
+                        status: 500,
+                        headers: {'content-type': 'application/pdf'}
+                    })
+                )
+            )
+
+            await expect(
+                tool().execute('id', params, AbortSignal.abort(), onUpdate, ctx)
+            ).rejects.toThrow(SubagentErrors.Aborted)
+        }
+    )
+
+    test('joins split lines for PDFs only', async () => {
+        fetchMock.mockImplementationOnce(() => Promise.resolve(page('the fuel sys-\ntem')))
+        const text = 'COVERED: yes\nANSWER: x\nEVIDENCE:\nthe fuel system'
+        runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
+
+        await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(
+            'evidence not in the source: the fuel system'
         )
     })
 

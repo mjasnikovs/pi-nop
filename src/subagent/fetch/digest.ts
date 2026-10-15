@@ -4,12 +4,15 @@ import {parseHTML} from 'linkedom'
 import TurndownService from 'turndown'
 import {tables} from 'turndown-plugin-gfm'
 
+import type {Source} from '../answer'
 import {FetchErrors} from './errors'
+import {pdfText, quotable} from './pdf'
 
 enum ContentKind {
     Html,
     Text,
     Sniff,
+    Pdf,
     Unsupported
 }
 
@@ -74,6 +77,15 @@ const textMimes = new Set([
     'application/sql'
 ])
 
+// The names freedesktop shared-mime-info lists for PDF.
+const pdfMimes = new Set([
+    'application/pdf',
+    'application/x-pdf',
+    'application/acrobat',
+    'application/nappdf',
+    'image/pdf'
+])
+
 const mimeOf = (contentType: string): string => contentType.split(';')[0].trim().toLowerCase()
 
 const classify = (contentType: string): ContentKind => {
@@ -83,6 +95,7 @@ const classify = (contentType: string): ContentKind => {
     if (mime === '' || mime.startsWith('text/')) return ContentKind.Text
     if (mime.endsWith('+json') || mime.endsWith('+xml')) return ContentKind.Text
     if (textMimes.has(mime)) return ContentKind.Text
+    if (pdfMimes.has(mime)) return ContentKind.Pdf
     if (mime === 'application/octet-stream') return ContentKind.Sniff
     return ContentKind.Unsupported
 }
@@ -129,6 +142,18 @@ const decodeBody = (bytes: Uint8Array, contentType: string, kind: ContentKind): 
 
 const looksLikeText = (bytes: Uint8Array): boolean =>
     !bytes.includes(0) && utf8(bytes) !== undefined
+
+// PDF readers look for the header in the first 1024 bytes and for %%EOF in the last 1024.
+const pdfMarkWindow = 1024
+const hasPdfHeader = (bytes: Uint8Array): boolean =>
+    Buffer.from(bytes.subarray(0, pdfMarkWindow)).includes('%PDF-')
+const hasPdfMarks = (bytes: Uint8Array): boolean =>
+    hasPdfHeader(bytes) && Buffer.from(bytes.subarray(-pdfMarkWindow)).includes('%%EOF')
+
+const sniffsAsPdf = (kind: ContentKind, contentType: string, bytes: Uint8Array): boolean => {
+    const undeclared = kind === ContentKind.Sniff || mimeOf(contentType) === ''
+    return undeclared && hasPdfMarks(bytes)
+}
 
 /** The fields read off the parsed document. Its DOM types are not in this tsconfig lib. */
 type ParsedChild = {
@@ -273,6 +298,8 @@ type Digest = {
     text: string
     /** Where a meta refresh sends the reader, as written in the page. */
     refresh?: string
+    /** More ways a quote may match the text, such as a PDF word split at a line end. */
+    sources?: Source[]
 }
 
 const htmlToMarkdown = (html: string): Digest => {
@@ -314,7 +341,19 @@ const readBody = async (response: Response): Promise<Uint8Array> => {
 const unsupported = (contentType: string): Error =>
     new Error(FetchErrors.Failed + `unsupported content type ${contentType}`)
 
-const digest = async (response: Response): Promise<Digest> => {
+const pdfDigest = async (
+    bytes: Uint8Array,
+    contentType: string,
+    signal?: AbortSignal
+): Promise<Digest> => {
+    if (!hasPdfHeader(bytes))
+        throw new Error(FetchErrors.Failed + `served as ${contentType} but the body is not a PDF`)
+
+    const text = await pdfText(bytes, maxBytes, signal)
+    return {text, sources: [quotable(text)]}
+}
+
+const digest = async (response: Response, signal?: AbortSignal): Promise<Digest> => {
     const contentType = response.headers.get('content-type') ?? ''
     const kind = classify(contentType)
 
@@ -325,6 +364,8 @@ const digest = async (response: Response): Promise<Digest> => {
 
     const bytes = await readBody(response)
 
+    if (kind === ContentKind.Pdf || sniffsAsPdf(kind, contentType, bytes))
+        return pdfDigest(bytes, contentType, signal)
     if (kind === ContentKind.Sniff && !looksLikeText(bytes)) throw unsupported(contentType)
 
     const body = decodeBody(bytes, contentType, kind)

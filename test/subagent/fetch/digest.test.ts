@@ -1,10 +1,14 @@
+import {readFileSync} from 'node:fs'
 import {describe, expect, test} from 'bun:test'
 
+import {missingFrom} from '../../../src/subagent/answer'
 import {digest, maxBytes} from '../../../src/subagent/fetch/digest'
+import {pdftotextReady} from '../../pdftotext'
 
 const response = (body: string | Uint8Array, contentType?: string): Response =>
     new Response(body, {headers: contentType === undefined ? {} : {'content-type': contentType}})
 
+const pdf = readFileSync(new URL('fixtures/split-code.pdf', import.meta.url))
 const text = async (page: Response): Promise<string> => (await digest(page)).text
 const article = '<p>' + 'word '.repeat(300) + '</p>'
 describe('digest', () => {
@@ -157,6 +161,52 @@ describe('digest', () => {
         await expect(
             digest(response(new Uint8Array([0x61, 0x00]), 'application/octet-stream'))
         ).rejects.toThrow('unsupported content type application/octet-stream')
+    })
+
+    describe.skipIf(!pdftotextReady)('pdf', () => {
+        const junkFirst = Buffer.concat([Buffer.from([0xff, 0x0a]), pdf])
+        test('reads a PDF and gives quotes the joined lines too', async () => {
+            const page = await digest(response(pdf, 'application/pdf'))
+            expect(page.text).toStartWith('Fit only the approved replacement filter')
+            expect(missingFrom(['part number VX-4471.'], page.sources ?? [])).toEqual([])
+        })
+
+        test.each(['application/x-pdf', 'application/acrobat', 'application/nappdf', 'image/pdf'])(
+            'reads a PDF served as %s',
+            async type => {
+                expect(await text(response(pdf, type))).toStartWith('Fit only')
+            }
+        )
+
+        test('sniffs a plain ASCII PDF served without a type', async () => {
+            expect(await text(response(pdf))).toStartWith('Fit only')
+        })
+
+        test('sniffs a PDF served without a type or as octet-stream', async () => {
+            expect(await text(response(junkFirst))).toStartWith('Fit only')
+            expect(await text(response(junkFirst, 'application/octet-stream'))).toStartWith(
+                'Fit only'
+            )
+        })
+
+        test('trusts a declared text type over a PDF header', async () => {
+            expect(await text(response(junkFirst, 'text/plain'))).toStartWith('ÿ\n%PDF-')
+        })
+    })
+
+    test('names a body served as a PDF that is not one', async () => {
+        await expect(digest(response('<p>Session expired</p>', 'application/pdf'))).rejects.toThrow(
+            'Fetch failed: served as application/pdf but the body is not a PDF'
+        )
+    })
+
+    test('keeps text that mentions a PDF header as text', async () => {
+        expect(await text(response('notes on the %PDF- header'))).toBe('notes on the %PDF- header')
+    })
+
+    test('looks for a PDF header only in the first 1024 bytes', async () => {
+        const late = Buffer.concat([Buffer.alloc(1024, 'a'), pdf])
+        expect(await text(response(late))).toContain('a%PDF-1.4')
     })
 
     test('reports a meta refresh target as written', async () => {

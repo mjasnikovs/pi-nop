@@ -48,6 +48,19 @@ at 0 such a reply fails the turn. The steps turn runs without the `ask_user` too
   block. A line counts when it starts with a letter and ends with `.`, `!` or `?`, so drafted
   code and list rows do not.
 
+## Fetch PDFs
+
+`subagent-fetch` reads a PDF through poppler's `pdftotext`. It must be on PATH and know the
+`-remove-hyphens` option, which Debian 13's poppler 25.03 lacks. `application/pdf` and the
+aliases shared-mime-info lists (`application/x-pdf`, `application/acrobat`, `application/nappdf`,
+`image/pdf`) are read as a PDF. With no type or `application/octet-stream`, a body with `%PDF-`
+in its first 1024 bytes and `%%EOF` in its last 1024 is too. A hyphen at a line end stays, so a
+part number split there is not joined. A quote may still join the split, even across a page
+break with no footer between the halves. Each split in a quote may keep its hyphen, keep it with a space, or between letters drop
+it, so one quote can hold a compound and a split word. A body served as a PDF with no `%PDF-` in
+its first 1024 bytes, a password protected PDF, or a PDF with no text layer, such as a scan,
+fails the call.
+
 ## Plan verify part
 
 A row under `VERIFY:` in the steps reply is a command for the main agent to run when the steps are
