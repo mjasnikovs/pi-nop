@@ -35,8 +35,8 @@
     <text x="870" y="156">SEARCH</text>
   </g>
   <g font-size="9.5" fill="#8b949e" text-anchor="middle">
-    <text x="522" y="176">Answers about</text>
-    <text x="522" y="188">the repo</text>
+    <text x="522" y="176">Reads many files,</text>
+    <text x="522" y="188">returns findings</text>
     <text x="638" y="176">Answers from</text>
     <text x="638" y="188">one web page</text>
     <text x="754" y="176">Answers from an</text>

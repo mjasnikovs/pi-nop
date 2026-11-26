@@ -1,6 +1,6 @@
 <div align="center">
 
-![pi-nop. Read-only subagents for pi. Subagents read in their own session and only the answer comes back. Tools: subagent answers about the repo, fetch answers from one web page, docs answers from an npm package, search gives up to 10 web results. /plan: goal, questions, steps, then the plan is sent to the main agent.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
+![pi-nop. Read-only subagents for pi. Subagents read in their own session and only the answer comes back. Tools: subagent reads many files and returns findings, fetch answers from one web page, docs answers from an npm package, search gives up to 10 web results. /plan: goal, questions, steps, then the plan is sent to the main agent.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
 
 # pi-nop
 
@@ -37,7 +37,7 @@ The main agent calls these on its own. Name a tool in your prompt to make it use
 
 | Tool | What it returns |
 |---|---|
-| `subagent` | An answer about the repo. The subagent reads with read, grep, find and ls. |
+| `subagent` | Findings from reading many files, not the files. It uses read, grep, find and ls. |
 | `subagent-fetch` | What a query asks for from one web page, not the page. |
 | `subagent-docs` | An answer from an npm package's types and README, with the latest version. Reads the installed copy, or downloads one. |
 | `web-search` | Up to 10 results with title, URL and snippet. `exa` and `ddg` need no key. `brave` needs `BRAVE_SEARCH_API_KEY`. |
