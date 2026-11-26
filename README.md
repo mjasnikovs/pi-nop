@@ -1,6 +1,6 @@
 <div align="center">
 
-![pi-nop — Read-only Local AI Subagents. subagent reads code across many files, subagent-fetch reads one web page, subagent-docs answers from an npm package, web-search searches the live web, and /plan goes from goal to questions to steps before the main agent builds it.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
+![pi-nop. Read-only subagents for pi. Four tools search the repo, read a web page, read an npm package and search the web. The /plan panel goes from goal to questions to steps, then hands the plan to the main agent.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
 
 # pi-nop
 
