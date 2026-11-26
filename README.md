@@ -42,9 +42,14 @@ The main agent calls these on its own. Name a tool in your prompt to make it use
 | `subagent-docs` | An answer from an npm package's types and README, with the latest version. Reads the installed copy, or downloads one. |
 | `web-search` | Up to 10 results with title, URL and snippet. `exa` and `ddg` need no key. `brave` needs `BRAVE_SEARCH_API_KEY`. |
 
+A page or package has to fit in 75% of the subagent model's context window. A bigger one fails
+the call. On a small local model, pick a model with a larger window for `subagent-fetch` and
+`subagent-docs`.
+
 ## Plan
 
-`/plan [request]` opens a panel with four steps.
+`/plan [request]` opens a panel with four steps. It needs the interactive UI. Plain `/plan`
+reopens the current plan. `/plan` with text starts a new one and drops the current one.
 
 1. Goal. The subagent writes one `GOAL:` line. Type to change it, or accept it.
 2. Questions. It asks one at a time. Pick an option or type your own answer.
@@ -66,7 +71,19 @@ and 1 file written outside the plan. Run `/plan` again to see which steps are do
 | `concurrency` | 1 to 4 | unlimited | Subagents running at once. |
 | `staleMinutes` | `off`, 5, 10, 20, 30 | 10 | Kill a run when the model sends nothing this long. |
 | `toolCallMinutes` | `off`, 5, 10, 15, 30 | 15 | Kill a run when one tool call takes this long. |
-| `restarts` | 0 to 3 | 2 | How many times a killed run goes again. |
+| `restarts` | 0 to 3 | 2 | How many times a killed run goes again. Also how often `/plan` sends a bad answer back. |
+
+```json
+{
+    "subagent": {"model": "llama-server/qwen3.8", "thinkingLevel": "low"},
+    "web-search": {"engine": "ddg"},
+    "restarts": 1
+}
+```
+
+`model` is `provider/id`, as pi lists it. `thinkingLevel` is `off`, `minimal`, `low`, `medium`,
+`high`, `xhigh` or `max`. One unknown key or bad value makes pi-nop ignore the whole file, with a
+warning. A model pi no longer lists falls back to pi's current one, with a warning.
 
 `PI_NOP_SEARCH_ENGINE` overrides the engine. `PI_NOP_SEARCH_ENDPOINT` overrides its URL.
 
