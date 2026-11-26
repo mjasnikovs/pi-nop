@@ -1,6 +1,6 @@
 {
     "name": "pi-nop",
-    "version": "0.0.1",
+    "version": "0.1.0",
     "description": "Read-only subagents for pi: repo search, web fetch, npm package docs, web search, and a /plan panel.",
     "keywords": [
         "pi-package",
