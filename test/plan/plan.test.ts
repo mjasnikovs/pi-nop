@@ -1283,6 +1283,41 @@ describe('/plan', () => {
             )
         })
 
+        test('a fresh session after a failed change is told the earlier typed changes', async () => {
+            await withSteps()
+            await typedChange('no README', 1)
+            prompt.mockRejectedValueOnce(new Error('Subagent run failed: boom'))
+            type('also docs')
+            panel?.handleInput(enter)
+            await until(() => screen().includes('boom'))
+            await typedChange('no test', 2)
+
+            expect(subagentSession).toHaveBeenCalledTimes(2)
+            expect(taskOf(-1)).toBe(
+                [
+                    'Request: fix',
+                    'Current goal: Fix the typo.',
+                    'Current steps:',
+                    stepsReply,
+                    'Change asked by the user: no README',
+                    'Change asked by the user: no test',
+                    '',
+                    stepsRules
+                ].join('\n')
+            )
+        })
+
+        test('the session that took a change is not told it again', async () => {
+            await withSteps()
+            await typedChange('no README', 1)
+            await typedChange('keep the test short', 2)
+
+            expect(subagentSession).toHaveBeenCalledTimes(1)
+            expect(taskOf(-1)).toBe(
+                `Change asked by the user: keep the test short\n\n${stepsRules}`
+            )
+        })
+
         test('change goal drops the typed steps changes', async () => {
             await withSteps()
             await typedChange('no README', 1)
@@ -1435,6 +1470,25 @@ describe('/plan', () => {
 
                 expect(subagentSession).toHaveBeenCalledTimes(2)
                 expect(taskOf(-1)).toContain(`Current steps:\n${edited}\nChange asked by the user`)
+            })
+
+            test('a change after an edit is told the changes typed before it', async () => {
+                await withSteps()
+                await typedChange('no README', 1)
+                edits(edited)
+                pick(1)
+                await shownAgain()
+                type('no test')
+                panel?.handleInput(enter)
+                await until(() => prompt.mock.calls.length === 5)
+
+                expect(taskOf(-1)).toContain(
+                    [
+                        `Current steps:\n${edited}`,
+                        'Change asked by the user: no README',
+                        'Change asked by the user: no test'
+                    ].join('\n')
+                )
             })
 
             test('esc and an empty text change nothing', async () => {

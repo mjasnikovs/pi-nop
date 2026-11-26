@@ -36,7 +36,6 @@ type PanelState = Steps & {
     running: boolean
     status: string
     error?: string
-    /** The text typed for the last failed run, which Try again sends. */
     failedText?: string
 }
 

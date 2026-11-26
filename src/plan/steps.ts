@@ -161,10 +161,17 @@ const editText = (plan: Steps): string =>
     plan.verify.length === 0 ? `${stepsText(plan)}\n${verifyLabel}` : stepsText(plan)
 
 /** head is what a fresh session must be told first; a session that knows the goal gets none. */
-const stepsTask = (head: string[], current: Steps, change?: string): string => {
+const stepsTask = (
+    head: string[],
+    current: Steps & {changes: string[]},
+    change?: string
+): string => {
     const asked = change === undefined ? [] : [goalTask({change})]
+    const earlier = current.changes.map(typed => goalTask({change: typed}))
     const known =
-        head.length === 0 || change === undefined ? [] : [currentLabel, stepsText(current)]
+        head.length === 0 || change === undefined ?
+            []
+        :   [currentLabel, stepsText(current), ...earlier]
     const lead = [...head, ...known, ...asked]
 
     if (lead.length === 0) return stepsRules

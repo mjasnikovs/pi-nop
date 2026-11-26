@@ -54,7 +54,7 @@ type PlanState = Steps & {
     handed: boolean
     /** What each FILES row was on disk at hand over. */
     disk?: string[]
-    /** Typed steps changes. The goal predates them, so hand over sends them too. */
+    /** Typed steps changes. The goal predates them, so hand over and a fresh session get them too. */
     changes: string[]
 }
 

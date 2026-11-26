@@ -372,6 +372,7 @@ describe('editText', () => {
 })
 
 describe('stepsTask', () => {
+    const typed = {...plan, changes: []}
     const head = [
         'Request: nicer',
         'Current goal: Be nice.',
@@ -380,21 +381,21 @@ describe('stepsTask', () => {
         'A1: b'
     ]
     test('a session that knows the goal gets the rules alone', () => {
-        expect(stepsTask([], plan)).toBe(stepsRules)
+        expect(stepsTask([], typed)).toBe(stepsRules)
     })
 
     test('a fresh session gets the request, the goal and the answers first', () => {
-        expect(stepsTask(head, plan)).toBe([...head, '', stepsRules].join('\n'))
+        expect(stepsTask(head, typed)).toBe([...head, '', stepsRules].join('\n'))
     })
 
     test('a change goes with the rules', () => {
-        expect(stepsTask([], plan, 'no test')).toBe(
+        expect(stepsTask([], typed, 'no test')).toBe(
             `Change asked by the user: no test\n\n${stepsRules}`
         )
     })
 
     test('a change in a fresh session carries the steps it changes', () => {
-        expect(stepsTask(head, plan, 'no test')).toBe(
+        expect(stepsTask(head, typed, 'no test')).toBe(
             [
                 ...head,
                 'Current steps:',
@@ -403,6 +404,26 @@ describe('stepsTask', () => {
                 '',
                 stepsRules
             ].join('\n')
+        )
+    })
+
+    test('a fresh session gets the earlier changes between the steps and the new change', () => {
+        expect(stepsTask(head, {...typed, changes: ['no README']}, 'no test')).toBe(
+            [
+                ...head,
+                'Current steps:',
+                reply,
+                'Change asked by the user: no README',
+                'Change asked by the user: no test',
+                '',
+                stepsRules
+            ].join('\n')
+        )
+    })
+
+    test('earlier changes go nowhere without a new change', () => {
+        expect(stepsTask(head, {...typed, changes: ['no README']})).toBe(
+            [...head, '', stepsRules].join('\n')
         )
     })
 })

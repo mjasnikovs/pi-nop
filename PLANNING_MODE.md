@@ -599,7 +599,8 @@ failed run: the session closes, the panel shows an error, saved steps stay.
 
 Typed text with steps on screen is a change: `Change asked by the user: <text>`, a blank line,
 the rules. A session that does not hold the plan (reopened panel, failed run, Finish) first gets
-request, goal and answers as text, and for a change the saved steps under `Current steps:`.
+request, goal and answers as text, and for a change the saved steps under `Current steps:` with
+the earlier typed changes after them (section 18).
 Hand over sends goal, decisions and the filled layout, as a follow-up when the main agent is
 busy. Before this pi refused that message and the plan was lost.
 
@@ -612,7 +613,8 @@ one), with the panel hidden. The text is the hand over layout, `VERIFY:` kept wi
 The same parser and file check as for a reply run on it, before the hand over. A refused edit
 reopens with the user's text and a short reason in the title. An edit that parses to the saved
 steps is not saved and the disk is not read. A saved edit closes the session, so a later change
-goes to a fresh one with the edited steps under `Current steps:`. No model sees new wording, only
+goes to a fresh one with the edited steps under `Current steps:` and the earlier typed changes
+after them (section 18). No model sees new wording, only
 the user's steps in the measured layout, so this is not measured on a model. For a plan with no
 command that fresh session is the weak path in section 14, "A repo with no tests": Gemma added a
 command in 21 of 28 change turns.
@@ -1459,3 +1461,43 @@ Shipped: K1. `PlanState.changes` keeps each typed steps change that gave steps, 
 sends them after the steps in the K1 and K5 layout. A new goal and "Change goal" start from the
 idle plan, so they drop them. An edit keeps them, which K4 shows loses an edit that undoes a
 change. Gemma was not run.
+
+## 18. Typed changes in a fresh steps session, measured
+
+2026-11-26, pi 1.6.0, Qwen 3.8 27B as the planning model. Closing the panel, Finish, a failed run, a
+saved edit or a model change closes the planning session. The next typed change went to a fresh
+session with the request, the goal, the answers, the current steps and the new change, and none of
+the earlier typed changes. Probe: the section 17 farewell goal (it asks for a README), steps without
+the README, earlier change "No README.", new change "Keep the farewell test to one assertion.". 10
+runs per arm, counted by whether the README is back in the steps or files.
+
+| Arm | Fresh session told | README back | Parsed |
+|---|---|---|---|
+| S0 | shipped: steps, new change | 10/10 | 10/10 |
+| S1 | steps, `Change asked by the user: No README.`, new change | 0/10 | 10/10 |
+
+Fisher p = 0.00001. A second probe asks whether an earlier change that adds something is applied
+twice. The earlier change was "Also add a CHANGELOG.md step.", the current steps already hold that
+step and `CHANGELOG.md (new)`, the new change is the same. 10 runs per arm, counted by CHANGELOG
+steps in the reply.
+
+| Arm | Fresh session told | Kept once | Dropped | Doubled |
+|---|---|---|---|---|
+| A0 | shipped: steps, new change | 2/10 | 8/10 | 0/10 |
+| A1 | steps, the CHANGELOG change line, new change | 10/10 | 0/10 | 0/10 |
+
+Shipped: S1. A fresh session gets each earlier typed change as a
+`Change asked by the user:` line after the current steps and before the new one. A session that
+took the changes is not told them again. Gemma was not run.
+
+A saved edit keeps the changes, as hand over does (section 17, K4). A third probe measures an edit
+that undoes one: the current steps hold the README step and `README.md (new)` again, as the edit
+put them back, and the new change is the same.
+
+| Arm | Fresh session told | README kept |
+|---|---|---|
+| E0 | before the fix: edited steps, new change | 10/10 |
+| E1 | edited steps, `Change asked by the user: No README.`, new change | 0/10 |
+
+So the next typed change undoes such an edit in the panel. Before the fix the edit held in the
+panel and lost at hand over instead (K4, 0/10).
