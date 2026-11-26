@@ -1,4 +1,84 @@
+<div align="center">
+
+![pi-nop. Read-only subagents for pi. Four tools search the repo, read a page or PDF, read an npm package and search the web. The /plan panel goes from goal to questions to steps, then hands the plan to the main agent.](https://cdn.jsdelivr.net/npm/pi-nop/assets/hero.svg)
+
 # pi-nop
+
+**Read-only subagents for [pi](https://pi.dev): repo search, web page and PDF fetch, npm package
+docs, web search, and a `/plan` panel.**
+
+[![npm](https://img.shields.io/npm/v/pi-nop?color=cb3837&logo=npm)](https://www.npmjs.com/package/pi-nop)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
+[![pi extension](https://img.shields.io/badge/pi-extension-7c3aed)](https://pi.dev/packages)
+[![tests](https://img.shields.io/badge/tests-830%20passing-3fb950)](#development)
+[![types](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](#development)
+
+</div>
+
+## What it does
+
+A main agent that reads a big file, a web page or a package's types fills its context with text
+it needs once. pi-nop gives that work to a subagent. The subagent runs in its own session, reads
+what it needs, and sends back only the answer.
+
+`/plan` uses the same subagent to turn a request into a plan. It writes a goal, asks you
+questions, then writes the steps, the files and the test commands. The main agent gets the plan
+and builds it. The footer shows how many plan files it has written.
+
+## Why it's different
+
+- **Read-only.** The repo subagent can read, grep, find and ls. No subagent can edit, write or
+  run commands.
+- **Built for local models.** Guards catch a model that loops, stalls, re-reads or leaks tool
+  markup, and run it again with a note on what went wrong.
+- **Measured.** Tool wording and plan layout were tested on Gemma 12B and Qwen 3.8 before they
+  shipped.
+- **One model per tool.** Each tool can run on its own model and thinking level, so a small fast
+  model can do the reading.
+- **Plans with checks.** Each plan file is checked against the disk before hand over. Then each
+  write is tracked against the plan.
+
+## Install
+
+```bash
+pi install npm:pi-nop
+```
+
+### Requirements
+
+- pi. Built against 1.0.0, smoke tested on 1.6.0.
+- `npm` and `tar` on PATH, for `subagent-docs`.
+- poppler's `pdftotext` with the `-remove-hyphens` option, for PDFs in `subagent-fetch`. See
+  [Fetch PDFs](#fetch-pdfs).
+
+## Quickstart
+
+The main agent picks the tools by itself. Ask it as you normally would:
+
+```
+Where is the session file written? Use a subagent.
+What does the retry option of p-retry do?
+Read https://example.com/changelog and tell me what changed in 2.0.
+```
+
+Plan a change in the panel, then send it to the main agent:
+
+```
+/plan add rate limiting to the upload endpoint
+```
+
+Run the reading on a smaller model:
+
+```
+/nop-config
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/plan [request]` | Open the planning panel. Text after the command is sent as the request. Needs the interactive UI. |
+| `/nop-config` | Open the config panel. See [Config](#config). |
 
 ## Tools
 
@@ -79,6 +159,23 @@ it, so one quote can hold a compound and a split word. A body served as a PDF wi
 its first 1024 bytes, a password protected PDF, or a PDF with no text layer, such as a scan,
 fails the call.
 
+## Plan
+
+`/plan` opens a panel over the chat. The strip at the top shows four steps.
+
+1. **Goal.** Type what you want done. The subagent reads the repo and writes a `GOAL:` line. Type
+   again to change it, or pick "Accept the goal".
+2. **Questions.** The subagent asks one question at a time, with numbered options. Pick one or
+   type your own answer. "Finish questions" stops early.
+3. **Steps.** "Plan steps" writes the `STEPS:`, `FILES:` and `VERIFY:` parts. Each file is tagged
+   `existing` or `new`. Type a change, or pick "Edit plan" to change it by hand.
+4. **Hand over.** "Send to main context" closes the panel and sends the plan to the main agent.
+   `/plan` then tracks it. See [Plan tracking](#plan-tracking).
+
+"Send to main context" is there from the goal on, so a small change can skip the questions.
+"Change goal" goes back to step 1 and keeps the goal text. Esc before hand over asks first, since
+a running subagent stops.
+
 ## Plan verify part
 
 A row under `VERIFY:` in the steps reply is a command for the main agent to run when the steps are
@@ -115,3 +212,27 @@ line each after the steps. The goal was written before the change, and without t
 agent followed the goal. A new goal or "Change goal" drops the lines. An edit keeps them, so an
 edit that undoes a typed change loses to the change line. A typed change that fails, or a goal
 change with no `GOAL:` line, offers "Try again" with the same text.
+
+## Environment
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `BRAVE_SEARCH_API_KEY` | `web-search` | Needed only when the engine is `brave`. |
+| `PI_NOP_SEARCH_ENGINE` | `web-search` | Overrides `web-search.engine` from the config. |
+| `PI_NOP_SEARCH_ENDPOINT` | `web-search` | Overrides the engine's URL. |
+
+## Development
+
+```bash
+bun install
+bun test               # 830 tests across 44 files
+npm run lint           # prettier, eslint and tsc, with fixes
+npm run lint:check     # the same, no fixes
+```
+
+The `eval` scripts run the tools against a live model. Built with [Bun](https://bun.sh),
+TypeScript strict and [TypeBox](https://github.com/sinclairzx81/typebox) for tool schemas.
+
+## License
+
+[MIT](./LICENSE) © Edgars Mjasnikovs
