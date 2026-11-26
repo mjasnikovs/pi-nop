@@ -70,18 +70,17 @@ other files written. `/plan` again shows each step marked.
 
 ### Guards
 
-A guard that trips kills the run and starts it again with a note. Past `restarts` the tool call
-fails.
+A guard that trips kills the run and starts it again with a note. Past `restarts` the run fails.
 
 | Guard | Trips on |
 |---|---|
-| loop | The same tool call or file read five times. |
-| stale | No output for `staleMinutes`. |
+| loop | The same tool call five times in twenty, or one file re-read five times with no new lines. |
+| stale | No output for `staleMinutes`. The clock pauses while a tool runs. |
 | tool-call | One tool call past `toolCallMinutes`. |
-| ground | Eight repeats or errors in a row. |
+| ground | Eight tool calls in a row that repeat or fail. |
 | churn | Tool results past twice the context window. |
 | leak | Tool call markup in the final answer. |
-| repeat | The same lines eight times in a row. |
+| repeat | The same block of lines eight times in a row. One line alone does not count. |
 | circle | Two sentences said eight times each in one thinking block. |
 
 ## Development
