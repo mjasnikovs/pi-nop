@@ -1,6 +1,6 @@
 <div align="center">
 
-![pi-nop. Read-only subagents for pi. Four tools search the repo, read a web page, read an npm package and search the web. The /plan panel goes from goal to questions to steps, then hands the plan to the main agent.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
+![pi-nop. The main agent sends a task to a subagent. The subagent reads repo files, a web page or npm package docs in its own session and sends back only the answer. /plan goes from goal to questions to steps, then the main agent builds it.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
 
 # pi-nop
 
