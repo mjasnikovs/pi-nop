@@ -30,7 +30,7 @@ once. pi-nop gives that work to a subagent in its own session. Only the answer c
 pi install npm:pi-nop
 ```
 
-Needs pi 1.0.0 or later. `subagent-docs` needs `npm` and `tar` on PATH.
+Needs pi 1.6.0 or later. `subagent-docs` needs `npm` and `tar` on PATH.
 
 ## Quickstart
 
