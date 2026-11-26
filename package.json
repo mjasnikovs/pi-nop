@@ -81,6 +81,6 @@
         "extensions": [
             "./src/index.ts"
         ],
-        "image": "https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/card.png"
+        "image": "https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.png"
     }
 }

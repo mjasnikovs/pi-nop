@@ -1,6 +1,6 @@
 <div align="center">
 
-![pi-nop. Read-only subagents for pi. Subagents read in their own session and only the answer comes back. Tools: subagent reads many files and returns findings, fetch answers from one web page, docs answers from an npm package, search gives up to 10 web results. /plan: goal, questions, steps, then the plan is sent to the main agent.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
+![pi-nop. Your daily driver. Minimal, read-only, guarded. Files, a web page and npm docs go into a guarded subagent. One answer goes back to pi.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
 
 # pi-nop
 
