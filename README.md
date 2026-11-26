@@ -32,21 +32,6 @@ pi install npm:pi-nop
 
 Needs pi 1.6.0 or later. `subagent-docs` needs `npm` and `tar` on PATH.
 
-## Quickstart
-
-The main agent picks the tools by itself:
-
-```
-Where is the session file written? Use a subagent.
-What does the retry option of p-retry do?
-```
-
-Plan a change, then send it to the main agent:
-
-```
-/plan add rate limiting to the upload endpoint
-```
-
 ## Tools
 
 | Tool | What it does |
