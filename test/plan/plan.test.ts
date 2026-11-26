@@ -1472,23 +1472,37 @@ describe('/plan', () => {
                 expect(taskOf(-1)).toContain(`Current steps:\n${edited}\nChange asked by the user`)
             })
 
-            test('a change after an edit is told the changes typed before it', async () => {
+            test('a saved edit drops the changes typed before it', async () => {
                 await withSteps()
                 await typedChange('no README', 1)
                 edits(edited)
                 pick(1)
                 await shownAgain()
+
+                expect(lastEntry()).toMatchObject({changes: []})
+
                 type('no test')
                 panel?.handleInput(enter)
                 await until(() => prompt.mock.calls.length === 5)
 
                 expect(taskOf(-1)).toContain(
-                    [
-                        `Current steps:\n${edited}`,
-                        'Change asked by the user: no README',
-                        'Change asked by the user: no test'
-                    ].join('\n')
+                    `Current steps:\n${edited}\nChange asked by the user: no test`
                 )
+                expect(taskOf(-1)).not.toContain('no README')
+            })
+
+            test('hand over after a saved edit sends no change typed before it', async () => {
+                await withSteps()
+                await typedChange('no README', 1)
+                edits(edited)
+                pick(1)
+                await shownAgain()
+                panel?.handleInput('\x1b[A')
+                panel?.handleInput(enter)
+                await untilSent()
+
+                expect(sendUserMessage.mock.calls[0]?.[0]).toContain(edited)
+                expect(sendUserMessage.mock.calls[0]?.[0]).not.toContain('no README')
             })
 
             test('esc and an empty text change nothing', async () => {

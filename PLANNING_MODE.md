@@ -1459,8 +1459,8 @@ Here the goal won 10 of 10. Tests passed and the farewell command worked in all 
 
 Shipped: K1. `PlanState.changes` keeps each typed steps change that gave steps, and hand over
 sends them after the steps in the K1 and K5 layout. A new goal and "Change goal" start from the
-idle plan, so they drop them. An edit keeps them, which K4 shows loses an edit that undoes a
-change. Gemma was not run.
+idle plan, so they drop them. An edit kept them, which K4 shows loses an edit that undoes a
+change. Section 18 changed that: a saved edit drops them. Gemma was not run.
 
 ## 18. Typed changes in a fresh steps session, measured
 
@@ -1490,14 +1490,14 @@ Shipped: S1. A fresh session gets each earlier typed change as a
 `Change asked by the user:` line after the current steps and before the new one. A session that
 took the changes is not told them again. Gemma was not run.
 
-A saved edit keeps the changes, as hand over does (section 17, K4). A third probe measures an edit
-that undoes one: the current steps hold the README step and `README.md (new)` again, as the edit
-put them back, and the new change is the same.
+A third probe measures an edit that undoes a typed change: the current steps hold the README step
+and `README.md (new)` again, as the edit put them back, and the new change is the same.
 
 | Arm | Fresh session told | README kept |
 |---|---|---|
-| E0 | before the fix: edited steps, new change | 10/10 |
+| E0 | edited steps, new change | 10/10 |
 | E1 | edited steps, `Change asked by the user: No README.`, new change | 0/10 |
 
-So the next typed change undoes such an edit in the panel. Before the fix the edit held in the
-panel and lost at hand over instead (K4, 0/10).
+Shipped: E0. A saved edit drops the typed changes, since the user wrote the steps by hand and they
+are final (owner's call). Neither a later fresh session nor hand over gets the changes typed before
+the edit. Changes typed after it are kept as before.

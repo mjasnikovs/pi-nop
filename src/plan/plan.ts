@@ -54,7 +54,7 @@ type PlanState = Steps & {
     handed: boolean
     /** What each FILES row was on disk at hand over. */
     disk?: string[]
-    /** Typed steps changes. The goal predates them, so hand over and a fresh session get them too. */
+    /** Typed steps changes since the last saved edit, which is final. The goal predates them. */
     changes: string[]
 }
 
@@ -203,7 +203,7 @@ export default function (pi: ExtensionAPI) {
 
         // A reload while the files were checked leaves a pi that throws.
         try {
-            save({...state, ...plan})
+            save({...state, ...plan, changes: []})
         } catch {
             return
         }
