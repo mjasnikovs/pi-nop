@@ -1,6 +1,6 @@
 <div align="center">
 
-![pi-nop. Read-only subagents for pi. Four tools search the repo, read a page or PDF, read an npm package and search the web. The /plan panel goes from goal to questions to steps, then hands the plan to the main agent.](https://cdn.jsdelivr.net/npm/pi-nop/assets/hero.svg)
+![pi-nop. Read-only subagents for pi. Four tools search the repo, read a page or PDF, read an npm package and search the web. The /plan panel goes from goal to questions to steps, then hands the plan to the main agent.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
 
 # pi-nop
 
