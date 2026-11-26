@@ -7,7 +7,7 @@
 **Read-only subagents for [pi](https://pi.dev): repo search, web fetch, npm package docs, web
 search, and a `/plan` panel.**
 
-[![npm](https://img.shields.io/npm/v/pi-nop?color=cb3837&logo=npm)](https://www.npmjs.com/package/pi-nop)
+[![npm](https://img.shields.io/npm/v/@mjasnikovs/pi-nop?color=cb3837&logo=npm)](https://www.npmjs.com/package/@mjasnikovs/pi-nop)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![pi extension](https://img.shields.io/badge/pi-extension-7c3aed)](https://pi.dev/packages)
 [![types](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](#development)
@@ -26,7 +26,7 @@ Gemma 12B and Qwen 3.8.
 ## Install
 
 ```bash
-pi install npm:pi-nop
+pi install npm:@mjasnikovs/pi-nop
 ```
 
 Needs pi 1.6.0 or later. `subagent-docs` needs `npm` and `tar` on PATH.
