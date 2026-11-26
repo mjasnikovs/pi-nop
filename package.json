@@ -3,7 +3,23 @@
     "version": "0.0.1",
     "description": "Read-only subagents for pi: repo search, web fetch, npm package docs, web search, and a /plan panel.",
     "keywords": [
-        "pi-package"
+        "pi-package",
+        "pi",
+        "pi-extension",
+        "pi-coding-agent",
+        "pi.dev",
+        "coding-agent",
+        "ai-agent",
+        "agent",
+        "subagent",
+        "read-only",
+        "local-llm",
+        "llm",
+        "llama-server",
+        "web-search",
+        "web-fetch",
+        "npm-docs",
+        "planning"
     ],
     "license": "MIT",
     "author": "Edgars Mjasnikovs",
@@ -12,7 +28,9 @@
         "url": "git+https://github.com/mjasnikovs/pi-nop.git"
     },
     "homepage": "https://github.com/mjasnikovs/pi-nop#readme",
-    "bugs": "https://github.com/mjasnikovs/pi-nop/issues",
+    "bugs": {
+        "url": "https://github.com/mjasnikovs/pi-nop/issues"
+    },
     "type": "module",
     "module": "./src/index.ts",
     "files": [
@@ -62,6 +80,7 @@
     "pi": {
         "extensions": [
             "./src/index.ts"
-        ]
+        ],
+        "image": "https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/card.png"
     }
 }

@@ -1,6 +1,6 @@
 <div align="center">
 
-![pi-nop. The main agent sends a task to a subagent. The subagent reads repo files, a web page or npm package docs in its own session and sends back only the answer. /plan goes from goal to questions to steps, then the main agent builds it.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
+![pi-nop — Read-only Local AI Subagents. subagent reads code across many files, subagent-fetch reads one web page, subagent-docs answers from an npm package, web-search searches the live web, and /plan goes from goal to questions to steps before the main agent builds it.](https://raw.githubusercontent.com/mjasnikovs/pi-nop/master/assets/hero.svg)
 
 # pi-nop
 
