@@ -1,27 +1,15 @@
 import {beforeEach, describe, expect, mock, test} from 'bun:test'
-import type {
-    ExtensionAPI,
-    ExtensionContext,
-    ExtensionHandler,
-    SessionStartEvent,
-    ToolDefinition
-} from '@earendil-works/pi-coding-agent'
+import type {ExtensionAPI, ToolDefinition} from '@earendil-works/pi-coding-agent'
 import register from '../src/index'
 
-type SessionStartHandler = ExtensionHandler<SessionStartEvent>
-
-const on = mock((_event: string, _handler: SessionStartHandler) => () => undefined)
+const on = mock((_event: string, _handler: unknown) => () => undefined)
 const registerTool = mock((_tool: ToolDefinition) => undefined)
 const registerCommand = mock((_name: string) => undefined)
-const notify = mock((_message: string, _level: string) => undefined)
 const pi = {on, registerTool, registerCommand} as unknown as ExtensionAPI
-const ctx = {ui: {notify}} as unknown as ExtensionContext
-const event: SessionStartEvent = {type: 'session_start', reason: 'startup'}
 beforeEach(() => {
     on.mockClear()
     registerTool.mockClear()
     registerCommand.mockClear()
-    notify.mockClear()
 })
 
 describe('extension', () => {
@@ -40,13 +28,10 @@ describe('extension', () => {
         expect(names).toEqual(['nop-config', 'plan'])
     })
 
-    test('notifies on session start', () => {
+    test('only plan listens to session start', () => {
         register(pi)
 
-        const [name, handler] = on.mock.calls[0] as [string, SessionStartHandler]
-        expect(name).toBe('session_start')
-
-        void handler(event, ctx)
-        expect(notify).toHaveBeenCalledWith('Extension loaded!', 'info')
+        const events = on.mock.calls.map(([event]) => event)
+        expect(events.filter(event => event === 'session_start')).toHaveLength(1)
     })
 })

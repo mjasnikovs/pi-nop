@@ -1183,12 +1183,29 @@ describe('extension', () => {
         )
     })
 
-    test('falls back to the host model when the saved one is unknown', async () => {
+    test('warns and falls back to the host model when the saved one is unknown', async () => {
+        notify.mockClear()
         saveConfig({subagent: {model: 'acme/gone', thinkingLevel: 'low'}})
 
         await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
 
         expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({model: hostModel}))
+        expect(notify.mock.calls).toEqual([
+            [
+                'pi-nop model acme/gone is not available, using the host model. Run /nop-config to pick another.',
+                'warning'
+            ]
+        ])
+    })
+
+    test('a saved model the registry has, or none saved, gives no warning', async () => {
+        notify.mockClear()
+        saveConfig({subagent: {model: 'acme/fast'}})
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+        saveConfig({subagent: {thinkingLevel: 'low'}})
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
+
+        expect(notify).not.toHaveBeenCalled()
     })
 
     test('forwards subagent progress to the tool update callback', async () => {

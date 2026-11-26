@@ -118,6 +118,20 @@ describe('PlanPanel', () => {
         expect(retry).toHaveBeenCalledTimes(1)
     })
 
+    test('a failed change puts Try again with its text below the main row', () => {
+        const failed = {goal: 'Fix it.', error: 'boom', failedText: 'add a test'}
+        const at = (label: string) => panel.render(width).findIndex(line => line.includes(label))
+        panel.setState(state(failed))
+        const order = [rows.accept, rows.retry, rows.handOver, rows.close].map(row => at(row.label))
+        expect(order.every(index => index >= 0)).toBe(true)
+        expect(order).toEqual(order.toSorted((left, right) => left - right))
+
+        panel.setState(state({...failed, accepted: true, asked: true, steps: ['Fix.']}))
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(retry).toHaveBeenLastCalledWith('add a test')
+    })
+
     test('a failed run with no request has no menu', () => {
         panel.setState(state({error: 'No model selected'}))
         expect(panel.render(width).join('\n')).not.toContain(rows.retry.label)

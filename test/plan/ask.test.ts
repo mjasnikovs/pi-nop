@@ -127,21 +127,27 @@ describe('questionsTask', () => {
 
 describe('handOverMessage', () => {
     test('with no answers it is the goal alone', () => {
-        expect(handOverMessage('Be nice.', [], '')).toBe('Be nice.')
+        expect(handOverMessage('Be nice.', [], '', [])).toBe('Be nice.')
     })
 
     test('answers follow the goal as settled decisions', () => {
-        const message = handOverMessage('Be nice.', decisions, '')
+        const message = handOverMessage('Be nice.', decisions, '', [])
         expect(message).toStartWith('Be nice.\n\nPLANNING DECISIONS — these were settled')
         expect(message).toEndWith(
             'as usual.\n\nQ1: Which greeting?\nA1: Hello\nQ2: Add a test?\nA2: No'
         )
     })
 
-    test('the steps come last, after a blank line', () => {
-        const plan = 'STEPS:\n1. Greet.\nFILES:\n- a.js (existing)'
-        expect(handOverMessage('Be nice.', [], plan)).toBe(`Be nice.\n\n${plan}`)
-        expect(handOverMessage('Be nice.', decisions, plan)).toEndWith(`A2: No\n\n${plan}`)
+    const plan = 'STEPS:\n1. Greet.\nFILES:\n- a.js (existing)'
+    test('the steps come after a blank line', () => {
+        expect(handOverMessage('Be nice.', [], plan, [])).toBe(`Be nice.\n\n${plan}`)
+        expect(handOverMessage('Be nice.', decisions, plan, [])).toEndWith(`A2: No\n\n${plan}`)
+    })
+
+    test('typed changes come last, one line each, as measured', () => {
+        expect(handOverMessage('Be nice.', [], plan, ['No README.', 'Short test.'])).toBe(
+            `Be nice.\n\n${plan}\n\nChange asked by the user: No README.\nChange asked by the user: Short test.`
+        )
     })
 })
 
@@ -219,6 +225,26 @@ describe('askTool', () => {
 
     test('fewer than two distinct options are refused', async () => {
         await expect(run({options: ['Hello', 'Hello ', '']})).rejects.toThrow(AskErrors.Options)
+    })
+
+    test('more than five distinct options are refused before the turn is used', async () => {
+        const six = ['a', 'b', 'c', 'd', 'e', 'f']
+        await expect(run({options: six})).rejects.toThrow(AskErrors.Options)
+        expect(claim).not.toHaveBeenCalled()
+        expect(show).not.toHaveBeenCalled()
+    })
+
+    test('five distinct options with a repeat are shown', async () => {
+        await run({options: ['a', 'b', 'c', 'd', 'e', 'a ']})
+
+        expect(show.mock.calls[0]?.[0].options).toEqual(['a', 'b', 'c', 'd', 'e'])
+    })
+
+    test('the option limit reads as measured', () => {
+        expect(String(AskErrors.Options)).toBe('Give 2 to 5 options.')
+        expect(askTool(host).description).toBe(
+            'Ask the user one question. Give 2 to 5 options. Call once per question.'
+        )
     })
 
     test('a quote that is not in the file is refused', async () => {

@@ -12,6 +12,7 @@ import type {SendBack, SubagentTask, SubagentUpdate} from '../../src/subagent/su
 import {acceptRules, AskErrors, handOverMessage} from '../../src/plan/ask'
 import {goalPrompt, sendBackGoal} from '../../src/plan/goal'
 import {layoutNote, stepsRules} from '../../src/plan/steps'
+import type {PlanState} from '../../src/plan/plan'
 import type {Steps} from '../../src/plan/steps'
 import {stamps} from '../../src/plan/track'
 import {tempTree} from '../tree'
@@ -37,7 +38,14 @@ const prompt = mock(
 )
 const dispose = mock(() => undefined)
 const subagentSession = mock((_options: SessionOptions) => ({prompt, dispose}))
-const configuredOptions = mock(() => ({cwd: '/repo', prompt: '', tools: []}))
+type Configured = {
+    cwd: string
+    prompt: string
+    tools: string[]
+    model?: {provider: string; id: string}
+    thinkingLevel?: string
+}
+const configuredOptions = mock((): Configured => ({cwd: '/repo', prompt: '', tools: []}))
 await mock.module('../../src/subagent/subagent', () => ({
     subagentSession,
     configuredOptions
@@ -159,13 +167,21 @@ const planned = {
     files: [{path: 'src/greet.js', state: 'existing'}],
     verify: ['npm test']
 }
-const idleEntry = {accepted: false, decisions: [], asked: false, handed: false, ...noSteps}
+const idleEntry = {
+    accepted: false,
+    decisions: [],
+    asked: false,
+    handed: false,
+    changes: [],
+    ...noSteps
+}
 const goalEntry = {
     request: 'fix',
     goal: 'Fix the typo.',
     decisions: [],
     asked: false,
     handed: false,
+    changes: [],
     ...noSteps
 }
 const tool = (): Tool => subagentSession.mock.calls.at(-1)?.[0].customTools[0] as Tool
@@ -198,6 +214,7 @@ beforeEach(() => {
     panel = undefined
     closed = false
     const fakes = [prompt, dispose, subagentSession, appendEntry, sendUserMessage, custom, notify]
+    configuredOptions.mockClear()
     for (const fn of [...fakes, editor, select, setHidden, setStatus]) fn.mockClear()
     ctx = freshCtx()
     register(pi)
@@ -310,6 +327,90 @@ describe('/plan', () => {
 
         expect(subagentSession).toHaveBeenCalledTimes(2)
         expect(prompt.mock.calls[2]?.[0]).toContain('Request: fix the greeting')
+    })
+
+    test('a failed goal change offers Try again, which sends the same change', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        prompt.mockRejectedValueOnce(new Error('Subagent run failed: boom'))
+        type('add a test too')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(screen()).toContain('Try again')
+        // Enter keeps picking Accept: Try again sits below it.
+        pick(1)
+        await settle()
+
+        expect(taskOf(-1)).toBe(
+            'Request: fix the greeting\nCurrent goal: Fix the typo.\nChange asked by the user: add a test too'
+        )
+        expect(screen()).not.toContain('boom')
+        expect(screen()).not.toContain('Try again')
+    })
+
+    test('a goal change with no GOAL line offers Try again with the same change', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        prompt.mockResolvedValueOnce({text: 'I changed it to use emoji.', details: {} as never})
+        type('use emoji')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(screen()).toContain(noGoalLine.slice(0, 30))
+        pick(1)
+        await settle()
+
+        expect(subagentSession).toHaveBeenCalledTimes(1)
+        expect(taskOf(-1)).toBe(
+            'Request: fix the greeting\nCurrent goal: Fix the typo.\nChange asked by the user: use emoji'
+        )
+    })
+
+    test('a new model opens a fresh session that is told request and goal', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        configuredOptions.mockReturnValueOnce({
+            cwd: '/repo',
+            prompt: '',
+            tools: [],
+            model: {provider: 'acme', id: 'fast'}
+        })
+        type('add a test too')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(dispose).toHaveBeenCalledTimes(1)
+        expect(subagentSession).toHaveBeenCalledTimes(2)
+        expect(subagentSession.mock.calls[1]?.[0]).toMatchObject({model: {id: 'fast'}})
+        expect(taskOf(-1)).toBe(
+            'Request: fix the greeting\nCurrent goal: Fix the typo.\nChange asked by the user: add a test too'
+        )
+    })
+
+    test('a new thinking level alone opens a fresh session too', async () => {
+        await commands.get('plan')?.handler('', ctx)
+        type('fix the greeting')
+        panel?.handleInput(enter)
+        await settle()
+        configuredOptions.mockReturnValueOnce({
+            cwd: '/repo',
+            prompt: '',
+            tools: [],
+            thinkingLevel: 'high'
+        })
+        type('add a test too')
+        panel?.handleInput(enter)
+        await settle()
+
+        expect(subagentSession).toHaveBeenCalledTimes(2)
+        expect(subagentSession.mock.calls[1]?.[0]).toMatchObject({thinkingLevel: 'high'})
     })
 
     test('a change after a reply with no goal resends the shown goal', async () => {
@@ -736,7 +837,7 @@ describe('/plan', () => {
         const decisions = [{question: 'Which greeting?', answer: 'Hey there'}]
         expect(said).toEqual(['Answer: Hey there'])
         expect(sendUserMessage).toHaveBeenCalledWith(
-            handOverMessage('Fix the typo.', decisions, stepsReply),
+            handOverMessage('Fix the typo.', decisions, stepsReply, []),
             {deliverAs: 'followUp'}
         )
         expect(lastEntry()).toMatchObject({decisions, handed: true})
@@ -1129,6 +1230,80 @@ describe('/plan', () => {
             panel?.handleInput(enter)
 
             await until(() => screen().includes(AskErrors.NotYet))
+        })
+
+        test('a failed steps change offers Try again, which sends the same change', async () => {
+            await withSteps()
+            prompt.mockRejectedValueOnce(new Error('Subagent run failed: boom'))
+            type('also the README')
+            panel?.handleInput(enter)
+            await until(() => screen().includes('boom'))
+
+            expect(screen()).toContain('Try again')
+            pick(1)
+            await until(() => !screen().includes('boom'))
+            await untilPlanned()
+
+            expect(taskOf(-1)).toContain('Change asked by the user: also the README')
+            expect(screen()).not.toContain('Try again')
+        })
+
+        test('change goal after a failed steps change drops Try again', async () => {
+            await withSteps()
+            prompt.mockRejectedValueOnce(new Error('Subagent run failed: boom'))
+            type('also the README')
+            panel?.handleInput(enter)
+            await until(() => screen().includes('boom'))
+            expect(screen()).toContain('Try again')
+
+            pick(3)
+
+            expect(screen()).not.toContain('Try again')
+        })
+
+        const typedChange = (text: string, count: number) => {
+            prompt.mockResolvedValueOnce({text: stepsReply, details: {} as never})
+            type(text)
+            panel?.handleInput(enter)
+            return until(() => (lastEntry() as PlanState).changes.length === count)
+        }
+        test('hand over sends each typed steps change after the steps', async () => {
+            await withSteps()
+            await typedChange('no README', 1)
+            await typedChange('keep the test short', 2)
+            panel?.handleInput(enter)
+            await untilSent()
+
+            expect(sendUserMessage.mock.calls[0]?.[0]).toBe(
+                [
+                    'Fix the typo.',
+                    stepsReply,
+                    'Change asked by the user: no README\nChange asked by the user: keep the test short'
+                ].join('\n\n')
+            )
+        })
+
+        test('change goal drops the typed steps changes', async () => {
+            await withSteps()
+            await typedChange('no README', 1)
+            pick(2)
+
+            expect(lastEntry()).toMatchObject({changes: []})
+        })
+
+        test('a saved entry from before the changes hands over without them', async () => {
+            const {changes: _changes, ...old} = {...goalEntry, ...planned}
+            entries.push({
+                type: 'custom',
+                customType: 'plan-mode',
+                data: {...old, accepted: true, asked: true}
+            })
+            handlers.get('session_start')?.({}, ctx)
+            await commands.get('plan')?.handler('', ctx)
+            panel?.handleInput(enter)
+            await untilSent()
+
+            expect(sendUserMessage.mock.calls[0]?.[0]).toBe(`Fix the typo.\n\n${stepsReply}`)
         })
 
         test('reopening shows the saved steps and takes a change', async () => {

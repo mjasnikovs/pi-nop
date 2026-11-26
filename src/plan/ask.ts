@@ -9,18 +9,19 @@ import {goalTask} from './goal'
 
 const askToolName = 'ask_user'
 const none = 'NONE'
+const maxOptions = 5
 
 enum AskErrors {
     NotYet = 'Not asking yet. Give the GOAL line.',
     Question = 'Ask the user one question.',
     OnePerCall = 'One question per call. Ask again after this answer.',
-    Options = 'Give 2 to 5 options.',
+    Options = `Give 2 to ${maxOptions} options.`,
     Evidence = 'The evidence line is not in that file. Copy one whole line exactly, or use NONE.',
     Closed = 'The user closed the question.'
 }
 
 // Every string the model sees here was measured as written (PLANNING_MODE.md, section 10).
-const askDescription = 'Ask the user one question. Give 2 to 5 options. Call once per question.'
+const askDescription = `Ask the user one question. ${AskErrors.Options} Call once per question.`
 const askParameters = Type.Object({
     question: Type.String(),
     options: Type.Array(Type.String()),
@@ -133,10 +134,16 @@ const questionsTask = (unseen: GoalTask, decisions: Decision[]): string => {
     return [...head, '', acceptRules].join('\n')
 }
 
-const handOverMessage = (goal: string, decisions: Decision[], plan: string): string => {
+const handOverMessage = (
+    goal: string,
+    decisions: Decision[],
+    plan: string,
+    changes: string[]
+): string => {
     const answers = decisions.length === 0 ? [] : [settled, transcript(decisions).join('\n')]
+    const asked = changes.map(change => goalTask({change})).join('\n')
 
-    return [goal, ...answers, plan].filter(part => part !== '').join('\n\n')
+    return [goal, ...answers, plan, asked].filter(part => part !== '').join('\n\n')
 }
 
 const shown = (
@@ -178,7 +185,8 @@ const askTool = (host: AskHost) =>
 
             const options = distinctOptions(params.options)
 
-            if (options.length < 2) throw new Error(AskErrors.Options)
+            if (options.length < 2 || options.length > maxOptions)
+                throw new Error(AskErrors.Options)
             const verified = await quoted(host.cwd, params.evidence, signal)
 
             // pi leaves a waiting tool unsettled on abort, and a listener added after it never fires.

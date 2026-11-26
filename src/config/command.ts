@@ -20,7 +20,6 @@ import type {NopConfig, Setting} from './config'
 import {gap, header, settable, skipInert} from './sections'
 
 const maxVisible = 10
-// Two levels up from both src/config and dist/config, so the built package reads the same file.
 const packageJson = new URL('../../package.json', import.meta.url)
 const title = (): string =>
     `pi-nop v${(JSON.parse(readFileSync(packageJson, 'utf8')) as {version: string}).version}`

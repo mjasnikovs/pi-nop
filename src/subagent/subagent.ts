@@ -21,6 +21,7 @@ import {
     concurrency,
     findModel,
     inherit,
+    missingModel,
     modelOf,
     read,
     safeConfig,
@@ -122,11 +123,14 @@ const defaultOptions = (cwd: string): SubagentOptions => ({
 const configuredOptions = (ctx: ExtensionContext, tool: NopTool): SubagentOptions => {
     const nop = safeConfig(ctx)
     const thinkingLevel = read(nop, thinkingOf(tool))
+    const spec = read(nop, modelOf(tool))
+    const model = spec === inherit ? undefined : findModel(ctx.modelRegistry, spec)
 
+    if (spec !== inherit && model === undefined) ctx.ui.notify(missingModel(spec), 'warning')
     return {
         ...defaultOptions(ctx.cwd),
         thinkingLevel: thinkingLevel === inherit ? ctx.thinkingLevel : thinkingLevel,
-        model: findModel(ctx.modelRegistry, read(nop, modelOf(tool))) ?? ctx.model
+        model: model ?? ctx.model
     }
 }
 
@@ -397,7 +401,7 @@ const subagentSession = (options: SubagentOptions): SubagentSession => {
         sendBack?: SendBack,
         without: string[] = []
     ): Promise<SubagentResult> => {
-        // Read on every prompt, so a session kept open still follows the current settings.
+        // Read on every prompt, so a session kept open follows the current cap and guards.
         const nop = safeConfig()
         const cap = read(nop, concurrency)
         slots.setCap(cap === unlimited ? Number.POSITIVE_INFINITY : cap)

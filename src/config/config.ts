@@ -25,6 +25,8 @@ const unlimited = 'unlimited'
 const off = 'off'
 const brokenConfig =
     'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
+const missingModel = (spec: string): string =>
+    `pi-nop model ${spec} is not available, using the host model. Run /nop-config to pick another.`
 
 type NopTool = (typeof tools)[number]
 type EngineName = (typeof engines)[number]
@@ -217,6 +219,7 @@ export {
     findModel,
     inherit,
     loadConfig,
+    missingModel,
     modelOf,
     modelSpec,
     off,

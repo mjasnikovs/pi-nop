@@ -8,6 +8,7 @@ import type {OverlayHandle} from '@earendil-works/pi-tui'
 import Value from 'typebox/value'
 
 import {boxed, frameRows} from '../config/box'
+import {modelSpec} from '../config/config'
 import {configuredOptions, subagentSession} from '../subagent/subagent'
 import type {SubagentSession, SubagentUpdate} from '../subagent/subagent'
 import {progressLabel} from '../subagent/progress'
@@ -53,10 +54,16 @@ type PlanState = Steps & {
     handed: boolean
     /** What each FILES row was on disk at hand over. */
     disk?: string[]
+    /** Typed steps changes. The goal predates them, so hand over sends them too. */
+    changes: string[]
 }
+
+/** What the session was opened with, so a settings change opens a fresh one. */
+type Opened = {model?: string; thinkingLevel?: string}
 
 type Run = {
     request: string
+    typed?: string
     status: string
     turns: number
     controller: AbortController
@@ -86,6 +93,7 @@ const idle: PlanState = {
     decisions: [],
     asked: false,
     handed: false,
+    changes: [],
     steps: [],
     files: [],
     verify: []
@@ -114,16 +122,15 @@ export default function (pi: ExtensionAPI) {
     let state = idle
     let running: Run | undefined
     let error: string | undefined
-    let subagent: {session: SubagentSession; knowsGoal: boolean} | undefined
+    let subagent: {session: SubagentSession; knowsGoal: boolean; opened: Opened} | undefined
     let repaint: (() => void) | undefined
     let tracked: Progress | undefined
-    /** The request of the last failed run. Try again sends it when no goal came back. */
-    let failedRequest: string | undefined
+    let failedText: string | undefined
     let trackRuns = 0
 
     // The only place panel state comes from, so a new field cannot miss a copy.
     const panelState = (): PanelState => ({
-        request: state.request ?? running?.request ?? failedRequest,
+        request: state.request ?? running?.request ?? failedText,
         goal: state.goal,
         accepted: state.accepted,
         asked: state.asked,
@@ -136,10 +143,12 @@ export default function (pi: ExtensionAPI) {
         question: running?.waiting?.question,
         running: running !== undefined && running.waiting === undefined,
         status: running?.status ?? '',
-        error
+        error,
+        failedText
     })
 
     const save = (next: PlanState): void => {
+        failedText = undefined
         state = next
         pi.appendEntry(entryType, state)
     }
@@ -168,7 +177,7 @@ export default function (pi: ExtensionAPI) {
     const handOver = async (ctx: ExtensionContext): Promise<void> => {
         const plan = state
         const {goal, decisions} = plan
-        const message = handOverMessage(goal ?? '', decisions, stepsText(plan))
+        const message = handOverMessage(goal ?? '', decisions, stepsText(plan), plan.changes)
         const disk = await stamps(ctx.cwd, plan)
 
         // A new request or a tree move while the stamps were read replaced this plan.
@@ -247,22 +256,32 @@ export default function (pi: ExtensionAPI) {
     const openSubagent = (
         ctx: ExtensionContext
     ): {session: SubagentSession; knowsGoal: boolean} => {
+        const options = configuredOptions(ctx, 'subagent')
+        const opened = {
+            model: options.model === undefined ? undefined : modelSpec(options.model),
+            thinkingLevel: options.thinkingLevel
+        }
+
+        if (subagent !== undefined && !Value.Equal(subagent.opened, opened)) closeSubagent()
+
         subagent ??= {
             session: subagentSession({
-                ...configuredOptions(ctx, 'subagent'),
+                ...options,
                 prompt: goalPrompt,
                 customTools: [askTool(askHost(ctx.cwd))],
                 waitingTools: [askToolName]
             }),
-            knowsGoal: false
+            knowsGoal: false,
+            opened
         }
         return subagent
     }
 
-    const start = (request: string, questions: boolean): Run => {
+    const start = (request: string, questions: boolean, typed?: string): Run => {
         stopRun()
         const run: Run = {
             request,
+            typed,
             status: '',
             turns: 0,
             controller: new AbortController(),
@@ -290,7 +309,7 @@ export default function (pi: ExtensionAPI) {
         if (run.controller.signal.aborted) return
         closeSubagent()
         error = failure instanceof Error ? failure.message : String(failure)
-        failedRequest = run.request
+        failedText = run.typed
         repaint?.()
     }
 
@@ -318,7 +337,7 @@ export default function (pi: ExtensionAPI) {
         const current = openSubagent(ctx)
         const unseen = {request: state.request, goal: state.goal}
         const head = current.knowsGoal ? [] : planHead(unseen, state.decisions)
-        const run = start(state.request ?? '', false)
+        const run = start(state.request ?? '', false, change)
         const check = sendBackSteps(ctx.cwd, run.controller.signal)
 
         try {
@@ -340,7 +359,11 @@ export default function (pi: ExtensionAPI) {
 
             current.knowsGoal = true
             running = undefined
-            save({...state, ...plan})
+            save({
+                ...state,
+                ...plan,
+                changes: change === undefined ? state.changes : [...state.changes, change]
+            })
             repaint?.()
         } catch (failure) {
             failed(run, failure)
@@ -363,9 +386,10 @@ export default function (pi: ExtensionAPI) {
 
     const refine = async (ctx: ExtensionContext, text: string): Promise<void> => {
         const request = state.request ?? text
-        const task = taskFor(text)
+        // Opened first: a fresh session must be told the request and the goal.
         const current = openSubagent(ctx)
-        const run = start(request, false)
+        const task = taskFor(text)
+        const run = start(request, false, text)
 
         try {
             const {text: reply} = await current.session.prompt(
@@ -380,7 +404,7 @@ export default function (pi: ExtensionAPI) {
                 // The session's last reply is not the shown goal, so the next change resends it.
                 current.knowsGoal = false
                 error = noGoalLine
-                failedRequest = request
+                failedText = text
             } else {
                 current.knowsGoal = true
                 save({...idle, request, goal})
@@ -429,15 +453,14 @@ export default function (pi: ExtensionAPI) {
             }
         }
 
+        const change = (text: string): void =>
+            void (state.steps.length > 0 ? planSteps(ctx, text) : refine(ctx, text))
+
         return ctx.ui.custom<void>(
             (tui, theme, _keybindings, done) => {
                 const actions: PanelActions = {
-                    change: text =>
-                        void (state.steps.length > 0 ? planSteps(ctx, text) : refine(ctx, text)),
-                    retry: () => {
-                        error = undefined
-                        void refine(ctx, failedRequest ?? '')
-                    },
+                    change,
+                    retry: change,
                     accept: () => {
                         error = undefined
                         save({...state, accepted: true})
@@ -492,7 +515,7 @@ export default function (pi: ExtensionAPI) {
                     ),
                     dispose: () => {
                         repaint = undefined
-                        failedRequest = undefined
+                        failedText = undefined
                         closeSubagent()
                     }
                 }
@@ -532,7 +555,7 @@ export default function (pi: ExtensionAPI) {
 
     const restore = (_event: unknown, ctx: ExtensionContext): void => {
         state = lastPlan(ctx).state
-        failedRequest = undefined
+        failedText = undefined
         void track(ctx)
     }
     pi.on('session_start', restore)

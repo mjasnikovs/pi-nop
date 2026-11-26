@@ -1,17 +1,35 @@
 # pi-nop
 
+## Tools
+
+- `subagent`: a read-only subagent searches the repo and returns only its answer.
+- `subagent-fetch`: reads one web page or PDF and answers a query about it.
+- `subagent-docs`: answers from an npm package's types and README, installed or downloaded. It
+  needs `npm` and `tar` on PATH.
+- `web-search`: up to 10 results from the `web-search.engine`. `exa` and `ddg` need no key, `brave`
+  needs `BRAVE_SEARCH_API_KEY`. `PI_NOP_SEARCH_ENGINE` overrides the engine and
+  `PI_NOP_SEARCH_ENDPOINT` its URL.
+
+A download has no deadline of its own, and Esc stops it. Measured on node 24, a server that sends
+nothing fails the call after 300 seconds. npm on a registry that never answers gave up after 970
+seconds. A server that keeps sending a byte now and then is stopped only by Esc.
+
 ## Config
 
 `/nop-config` opens the panel. The file is `~/.pi/agent/pi-nop.json`.
 
 | Key | Values | Default | Meaning |
 |---|---|---|---|
-| `subagent`, `subagent-fetch`, `subagent-docs` | `{model, thinkingLevel}` | the host's | Model and thinking level per tool. |
+| `subagent`, `subagent-fetch`, `subagent-docs` | `{model, thinkingLevel}` | the host's | Model and thinking level per tool. `/plan` runs on the `subagent` row. |
 | `web-search.engine` | `exa`, `brave`, `ddg` | `exa` | Search engine. |
 | `concurrency` | 1 to 4 | unlimited | Subagents running at once. |
 | `staleMinutes` | `off`, 5, 10, 20, 30 | 10 | Kill a run when the model sends nothing for this long. |
 | `toolCallMinutes` | `off`, 5, 10, 15, 30 | 15 | Kill a run when one read, grep, find or ls does not return in this time. |
 | `restarts` | 0 to 3 | 2 | How many times a run goes again, after a kill or after `/plan` sends a goal or steps answer back. 0 keeps the guards, fails on the first kill and sends nothing back. |
+
+A saved model that pi no longer lists runs on the host model, with a warning on each call. The
+open `/plan` panel holds the keys, so its model changes only through an edit of the config file
+or a model pi drops. The next turn then runs in a fresh session.
 
 ### Guards
 
@@ -89,3 +107,11 @@ against hand over: `bun add` and `package.json`. The count runs when an `edit`, 
 call ends. "Stop tracking" or a new plan ends it. Not seen: a write through bash or a codemode
 script to a file outside the plan. For a folder row a command counts only when it adds, removes
 or renames an entry right inside the folder.
+
+## Plan changes
+
+A typed change to the steps goes to the main agent with the plan, one `Change asked by the user:`
+line each after the steps. The goal was written before the change, and without the line the main
+agent followed the goal. A new goal or "Change goal" drops the lines. An edit keeps them, so an
+edit that undoes a typed change loses to the change line. A typed change that fails, or a goal
+change with no `GOAL:` line, offers "Try again" with the same text.

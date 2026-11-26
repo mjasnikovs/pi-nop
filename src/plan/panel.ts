@@ -36,6 +36,8 @@ type PanelState = Steps & {
     running: boolean
     status: string
     error?: string
+    /** The text typed for the last failed run, which Try again sends. */
+    failedText?: string
 }
 
 type Action =
@@ -82,15 +84,19 @@ const optionRows = (question: Question): Row[] =>
 
 const menuFor = (state: PanelState): Row[] => {
     if (state.running) return []
+
+    const retry = {...rows.retry, text: state.failedText ?? ''}
+    const again = state.failedText === undefined ? [] : [retry]
+
     // A request with no goal and no run is one whose run failed.
-    if (state.goal === undefined) return state.request === undefined ? [] : [rows.retry, rows.close]
+    if (state.goal === undefined) return state.request === undefined ? [] : [retry, rows.close]
     if (state.handed) return [rows.stop, rows.close]
     if (state.question !== undefined)
         return [...optionRows(state.question), rows.finish, rows.changeGoal, rows.close]
-    if (!state.accepted) return [rows.accept, rows.handOver, rows.close]
+    if (!state.accepted) return [rows.accept, ...again, rows.handOver, rows.close]
     if (!state.asked) return [rows.ask, rows.handOver, rows.changeGoal, rows.close]
     if (state.steps.length === 0) return [rows.plan, rows.handOver, rows.changeGoal, rows.close]
-    return [rows.handOver, rows.edit, rows.changeGoal, rows.close]
+    return [rows.handOver, ...again, rows.edit, rows.changeGoal, rows.close]
 }
 
 const sameRows = (left: Row[], right: Row[]): boolean =>

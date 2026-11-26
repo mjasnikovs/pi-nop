@@ -1435,3 +1435,27 @@ question. Gemma's goal turn with G3 on a real repo was measured last night only 
 not in the TUI. mx5 is left on `night2` with six Qwen runs and one Gemma run committed; the server
 runs Qwen.
 
+
+## 17. Stale goal after a typed steps change, measured
+
+2026-11-26, pi 1.6.0, Qwen 3.8 27B as the main model. `night/contra-run.ts`, the farewell fixture:
+the goal asks for a farewell command and a README, the typed change was "No README." and the
+steps leave the README out. The hand over goes to `pi -p` in a fresh copy of the fixture. 10
+runs per arm, counted by whether `README.md` was written.
+
+| Arm | Hand over | Wrote README |
+|---|---|---|
+| K0 | shipped: goal, steps | 10/10 |
+| KC | control: goal and steps both want the README | 10/10 |
+| K1 | K0 plus a blank line and `Change asked by the user: No README.` | 1/10 |
+| K2 | K0 plus "Where the goal and the steps differ, follow the steps." | 9/10 |
+| K5 | K1 plus a second change line, one newline between | 0/10 |
+| K4 | KC steps, the README back as an edit would put it, with the K1 line | 0/10 |
+
+K0 against K1: Fisher p = 0.0001. Sections 15 and 16 saw the steps win 2 of 2 in the real TUI.
+Here the goal won 10 of 10. Tests passed and the farewell command worked in all 60 runs.
+
+Shipped: K1. `PlanState.changes` keeps each typed steps change that gave steps, and hand over
+sends them after the steps in the K1 and K5 layout. A new goal and "Change goal" start from the
+idle plan, so they drop them. An edit keeps them, which K4 shows loses an edit that undoes a
+change. Gemma was not run.
