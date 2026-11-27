@@ -41,7 +41,7 @@ type Project = {
 }
 
 const resolveOptions: ts.CompilerOptions = {moduleResolution: ts.ModuleResolutionKind.Bundler}
-const packageNamePattern = /^(@[^/\s@:]+\/)?[^./\s@:-][^/\s@:]*$/
+const packageNamePattern = /^(@[^/\\\s@:]+\/)?[^./\\\s@:-][^/\\\s@:]*$/
 const runtimePrefix = /^(node|bun):/
 
 const packageName = (module: string): string => {

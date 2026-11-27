@@ -13,6 +13,7 @@ import {
     sameQuestion
 } from '../../src/plan/ask'
 import type {AskHost, Question} from '../../src/plan/ask'
+import {noFifo} from '../fifo'
 import {tempTree} from '../tree'
 
 const greet = 'export const greet = (name) => `Helo, ${name}!`'
@@ -55,14 +56,11 @@ describe('quoted', () => {
         )
     })
 
-    test.skipIf(Bun.which('mkfifo') === null)(
-        'a pipe is refused instead of read to no end',
-        async () => {
-            execFileSync('mkfifo', [`${cwd}/pipe`])
+    test.skipIf(noFifo)('a pipe is refused instead of read to no end', async () => {
+        execFileSync('mkfifo', [`${cwd}/pipe`])
 
-            expect(await quoted(cwd, {file: 'pipe', line: greet}, undefined)).toBe(false)
-        }
-    )
+        expect(await quoted(cwd, {file: 'pipe', line: greet}, undefined)).toBe(false)
+    })
 
     test('an abort during the read ends the check', async () => {
         expect(await quoted(cwd, {file: source, line: greet}, AbortSignal.abort())).toBe(false)

@@ -1,4 +1,4 @@
-import {mkdirSync, mkdtempSync, writeFileSync} from 'node:fs'
+import {mkdirSync, mkdtempSync, realpathSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 
@@ -17,7 +17,9 @@ const writeTree = (root: string, files: Files): string => {
     return root
 }
 
-const tempTree = (files: Files): string => writeTree(mkdtempSync(join(tmpdir(), 'pi-nop-')), files)
+// macOS tmpdir is behind a symlink, and the code under test realpaths what it finds.
+const tempRoot = realpathSync(tmpdir())
+const tempTree = (files: Files): string => writeTree(mkdtempSync(join(tempRoot, 'pi-nop-')), files)
 
-export {tempTree, writeTree}
+export {tempRoot, tempTree, writeTree}
 export type {Files}

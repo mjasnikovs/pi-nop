@@ -14,6 +14,7 @@ import {
     stepsText
 } from '../../src/plan/steps'
 import type {PlanFile} from '../../src/plan/steps'
+import {noFifo} from '../fifo'
 import {tempTree} from '../tree'
 
 const cwd = tempTree({'src/greet.js': 'x', 'README.md': 'x'})
@@ -294,7 +295,7 @@ describe('misplaced', () => {
         }
     })
 
-    test.skipIf(Bun.which('mkfifo') === null)('a pipe is not read to no end', async () => {
+    test.skipIf(noFifo)('a pipe is not read to no end', async () => {
         execFileSync('mkfifo', [`${cwd}/pipe`])
 
         expect(await misplaced(cwd, [existing('pipe')], undefined)).toEqual(existing('pipe'))

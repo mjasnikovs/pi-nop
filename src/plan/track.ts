@@ -39,15 +39,13 @@ const writes = (entries: SessionEntry[]): string[] => [
 // pi exports no path resolver. Its read tool hands the resolved path to access.
 const resolved = async (cwd: string, path: string): Promise<string> => {
     const found = {path}
-    const read = createReadTool(cwd, {
-        operations: {
-            access: at => {
-                found.path = at
-                return Promise.reject(new Error(at))
-            },
-            readFile: () => Promise.resolve(Buffer.alloc(0))
-        }
-    })
+
+    const stop = (at: string): Promise<never> => {
+        found.path = at
+        return Promise.reject(new Error(at))
+    }
+
+    const read = createReadTool(cwd, {operations: {access: stop, readFile: stop}})
     await read.execute(resolveLabel, {path}, undefined).catch(() => undefined)
     return found.path
 }
@@ -117,7 +115,7 @@ const progress = async (
         ),
         outside: written
             .filter(path => !wanted.some(row => holds(row, path)))
-            .map(path => relative(cwd, path)),
+            .map(path => relative(cwd, path).split(sep).join('/')),
         written: wanted.filter(done).length,
         total: wanted.length
     }

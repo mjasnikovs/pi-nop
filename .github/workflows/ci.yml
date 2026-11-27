@@ -34,5 +34,5 @@ jobs:
             - run: pdftotext -v
             - run: bun install --frozen-lockfile
             - run: bun run lint:check
-            - run: bun test
+            - run: bun run test
             - run: node test/node/docs-smoke.mjs
