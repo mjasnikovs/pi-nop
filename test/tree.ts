@@ -17,8 +17,7 @@ const writeTree = (root: string, files: Files): string => {
     return root
 }
 
-// The code under test realpaths what it finds. macOS tmpdir is behind a symlink, and Windows
-// hands out an 8.3 short name like RUNNER~1, which only the native realpath expands.
+// The code under test realpaths natively: macOS tmpdir is a symlink, Windows an 8.3 name.
 const tempRoot = realpathSync.native(tmpdir())
 const tempTree = (files: Files): string => writeTree(mkdtempSync(join(tempRoot, 'pi-nop-')), files)
 

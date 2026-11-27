@@ -4,4 +4,4 @@ coverageSkipTestFiles = true
 coverageReporter = ["text"]
 coverageThreshold = 1.0
 # Its Windows branch runs only on Windows and its other branch only elsewhere. CI runs it on both.
-coveragePathIgnorePatterns = ["src/subagent/docs/platform.ts"]
+coveragePathIgnorePatterns = ["src/subagent/platform.ts"]
