@@ -8,7 +8,7 @@ import spawn from 'cross-spawn'
 import {describe} from '../describe'
 import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
-import {onPath, stop, tar} from './platform'
+import {notFound, onPath, stop, tar} from './platform'
 
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
@@ -23,12 +23,16 @@ const run = (
         const abort = () => stop(child)
         let stdout = ''
         let stderr = ''
+        const settle = () => signal?.removeEventListener('abort', abort)
         signal?.addEventListener('abort', abort, {once: true})
         child.stdout?.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
         child.stderr?.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
-        child.on('error', reject)
+        child.on('error', (error: NodeJS.ErrnoException) => {
+            settle()
+            reject(error.code === 'ENOENT' ? new Error(notFound(command)) : error)
+        })
         child.on('close', (code, killedBy) => {
-            signal?.removeEventListener('abort', abort)
+            settle()
             if (code === 0) return resolve(stdout)
             reject(new Error(stderr || `${command} ended with ${String(killedBy ?? code)}`))
         })

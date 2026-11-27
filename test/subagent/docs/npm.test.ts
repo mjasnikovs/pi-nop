@@ -76,6 +76,19 @@ describe('view', () => {
         expect(existsSync(join(project, 'ran'))).toBe(false)
     })
 
+    test('no npm on PATH fails as npm failing, not as a missing package', async () => {
+        const path = process.env.PATH
+        process.env.PATH = ''
+
+        try {
+            await expect(view({name: 'zod', spec: '^4'}, cwd)).rejects.toThrow(
+                new Error('npm failed: zod@^4 (npm was not found)')
+            )
+        } finally {
+            process.env.PATH = path
+        }
+    })
+
     test('a missing package or version is "not on npm"', async () => {
         await expect(view({name: 'nope', spec: 'latest'}, cwd)).rejects.toThrow(
             'not on npm: nope@latest (E404)'

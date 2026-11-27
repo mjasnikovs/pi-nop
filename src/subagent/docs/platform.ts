@@ -7,18 +7,26 @@ import {delimiter, isAbsolute, join} from 'node:path'
 const system32 = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
 // Git for Windows puts GNU tar on PATH, which reads C:\ as a remote host. System32 has bsdtar.
 const tar = process.platform === 'win32' ? join(system32, 'tar.exe') : 'tar'
+const notFound = (command: string): string => `${command} was not found`
 
 // On Windows which and cmd.exe search the current folder first, so a repo's own npm.cmd would run.
 const onPath = (name: string): string => {
     if (process.platform !== 'win32' || isAbsolute(name)) return name
 
-    const dirs = (process.env.PATH ?? '').split(delimiter).filter(dir => isAbsolute(dir))
-    const extensions = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(delimiter)
+    // Windows allows a quoted PATH entry, and which reads it the same way.
+    const dirs = (process.env.PATH ?? '')
+        .split(delimiter)
+        .map(dir => dir.replace(/^"(.*)"$/, '$1'))
+        .filter(dir => isAbsolute(dir))
+    // An empty PATHEXT entry would match Node's extensionless npm shell script.
+    const extensions = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+        .split(delimiter)
+        .filter(extension => extension !== '')
     const found = dirs
         .flatMap(dir => extensions.map(extension => join(dir, name + extension)))
         .find(file => existsSync(file))
 
-    if (found === undefined) throw new Error(`${name} is not on PATH`)
+    if (found === undefined) throw new Error(notFound(name))
     return found
 }
 
@@ -36,4 +44,4 @@ const stop = (child: ChildProcess): void => {
         .once('exit', code => code === 0 || child.kill())
 }
 
-export {onPath, stop, tar}
+export {notFound, onPath, stop, tar}
