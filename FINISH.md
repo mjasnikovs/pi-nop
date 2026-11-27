@@ -24,17 +24,13 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 6 rounds so far. Round 6 fixes are committed, and CI has not run on them yet.
+Review loop: 6 rounds so far. CI on round 6 is green on all three OSes.
 
 ## Next steps
 
-1. **Open mutant**: in `src/config/command.ts`, swapping `saveConfig(next)` and `config = next`
-   is not caught. The test `a change that was not saved is not kept...` fails inside `synced` (the
-   copy aside), before the save runs. Make the save itself fail: for example, open on a valid file,
-   then make only the write fail. Then rerun the mutant.
-2. Check that CI on PR #2 is green on all three OSes.
-3. Run `/code-review master` again, and loop until a round finds only speculation.
-4. Merge PR #2 (rebase), bump to 0.1.3, push master, wait for master CI, then `npm publish --access public`,
+1. Commit the save-failure test fix (read-only file, the swap mutant is now caught) and check CI.
+2. Run `/code-review master` again, and loop until a round finds only speculation.
+3. Merge PR #2 (rebase), bump to 0.1.3, push master, wait for master CI, then `npm publish --access public`,
    tag `v0.1.3`, and run the `pi install` check. Steps are in the memory note `npm-release-how`.
 
 ## Left as speculation or decided (do not reopen without new data)
