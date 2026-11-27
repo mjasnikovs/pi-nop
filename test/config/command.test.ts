@@ -634,6 +634,22 @@ describe('nop-config command', () => {
         )
     })
 
+    test('a change that was not saved is not kept, so the next save reports no outside edit', async () => {
+        writeFileSync(configPath, '{}')
+
+        const {panel} = await openPanel()
+        rmSync(configPath)
+        mkdirSync(configPath)
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        rmSync(configPath, {recursive: true})
+        writeFileSync(configPath, '{}')
+        notify.mockClear()
+        panel.handleInput(enter)
+        expect(notify).not.toHaveBeenCalled()
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'minimal'}})
+    })
+
     test('a file fixed by hand while the panel is open drops its stale models too', async () => {
         writeFileSync(configPath, 'nope')
 

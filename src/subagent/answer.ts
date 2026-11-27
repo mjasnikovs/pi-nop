@@ -61,8 +61,8 @@ const labelled = (line: string | undefined, label: string, flags = 'i'): string 
     return found === null ? undefined : line.slice(found[0].length).trim()
 }
 
-// A reply wrapped whole in a code fence still has its labels inside it.
-const isContent = (line: string): boolean => line !== '' && !/^(?:```|~~~)/.test(line)
+// A bare fence line, with or without its language, wraps content and is none.
+const isContent = (line: string): boolean => line !== '' && !/^(?:```|~~~)[\w+-]*$/.test(line)
 
 // Labels are found on trimmed lines, but the answer keeps its raw lines: blank lines and
 // indentation are part of a copied code block.
@@ -76,9 +76,9 @@ const parseAnswer = (text: string): Answer | undefined => {
     const divider = trimmed.findIndex(
         (line, index) => index > answerAt && labelled(line, 'EVIDENCE', '') !== undefined
     )
-    // `**Yes.**` is yes; `yesterday` is not a coverage.
+    // `**Yes.**` is yes. `no, partially` is a hedge, and read as no it would need no evidence.
     const said = labelled(trimmed[coveredAt], 'COVERED')?.replace(/[*_`]/g, '').toLowerCase()
-    const covered = /^[a-z]+/.exec(said ?? '')?.[0]
+    const covered = /^([a-z]+)[.!]?$/.exec(said ?? '')?.[1]
     const first = labelled(trimmed[answerAt], 'ANSWER')
 
     if (covered === undefined || !isCoverage(covered)) return undefined
