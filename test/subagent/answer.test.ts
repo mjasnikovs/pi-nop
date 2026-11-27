@@ -49,6 +49,17 @@ describe('parseAnswer', () => {
         expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
     })
 
+    test('a fence tag of any kind is no quote', () => {
+        const source = [{text: 'public int X = 1;', wholeLines: true}]
+        for (const fence of ['```c#', '```ts title="a.ts"', '```js {1,3}', '~~~ f#'])
+            expect(() =>
+                verifyAnswer(
+                    `COVERED: yes\nANSWER: x\nEVIDENCE:\n${fence}\npublic int X = 1;\n${fence.slice(0, 3)}`,
+                    source
+                )
+            ).not.toThrow()
+    })
+
     test('reads a reply in a longer fence, as one that holds a code block needs', () => {
         for (const fence of ['````', '~~~~'])
             expect(
