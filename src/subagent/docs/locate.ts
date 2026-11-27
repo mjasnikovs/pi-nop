@@ -96,7 +96,7 @@ const projectOf = (name: string, cwd: string): Project => {
 
 const findPackageDir = (name: string, cwd: string): string | undefined => {
     const dir = findUp(cwd, here => hasManifest(join(here, 'node_modules', name)))
-    return dir === undefined ? undefined : realpathSync(join(dir, 'node_modules', name))
+    return dir === undefined ? undefined : realpathSync.native(join(dir, 'node_modules', name))
 }
 
 const packageRootOf = (file: string, name: string): string => {
@@ -121,7 +121,7 @@ const stubTargets = (entry: string): Package[] => {
         const name = resolved?.packageId?.name
 
         if (name === undefined || resolved?.resolvedFileName === undefined) return []
-        return [readPackage(packageRootOf(realpathSync(resolved.resolvedFileName), name))]
+        return [readPackage(packageRootOf(realpathSync.native(resolved.resolvedFileName), name))]
     })
 }
 
@@ -135,7 +135,7 @@ const resolveEntry = (module: string, cwd: string): ts.ResolvedModuleFull | unde
     ).resolvedModule
 
     if (resolved === undefined) return undefined
-    return {...resolved, resolvedFileName: realpathSync(resolved.resolvedFileName)}
+    return {...resolved, resolvedFileName: realpathSync.native(resolved.resolvedFileName)}
 }
 
 // The package a resolved entry belongs to: the asked one, or @types/x when that answered.
@@ -190,7 +190,7 @@ const locateIn = (module: string, cwd: string): Found | undefined =>
 
 // A tree unpacked into the cache must not pick up a stray @types from an ancestor node_modules.
 const locateDownloaded = (module: string, root: string): Found | undefined => {
-    const fence = realpathSync(root) + sep
+    const fence = realpathSync.native(root) + sep
     const resolved = resolveEntry(module, root)
     const inside = resolved?.resolvedFileName.startsWith(fence) === true
     const found = packageAt(module, root, inside ? resolved : undefined)
