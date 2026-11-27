@@ -118,7 +118,8 @@ describe('view', () => {
             'warn.cjs'
         )
         process.env.npm_config_loglevel = 'silent'
-        process.env.NODE_OPTIONS = `--require "${warn}"`
+        // NODE_OPTIONS reads a backslash in quotes as an escape.
+        process.env.NODE_OPTIONS = `--require "${warn.replaceAll('\\', '/')}"`
 
         try {
             await expect(view({name: 'nope', spec: 'latest'}, cwd)).rejects.toThrow(
