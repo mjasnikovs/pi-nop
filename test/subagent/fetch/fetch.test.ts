@@ -9,7 +9,6 @@ import type {
 import type {Api, Model} from '@earendil-works/pi-ai'
 import type {TObject, TString} from 'typebox'
 import type {SubagentOptions, SubagentUpdate} from '../../../src/subagent/subagent'
-import {pdftotextReady} from '../../pdftotext'
 
 type FetchTool = ToolDefinition<TObject<{url: TString; query: TString}>>
 
@@ -123,23 +122,18 @@ describe('fetch tool', () => {
         )
     })
 
-    test.skipIf(!pdftotextReady)(
-        'accepts a PDF quote that rejoins a code split at a line end',
-        async () => {
-            fetchMock.mockImplementationOnce(() =>
-                Promise.resolve(
-                    new Response(splitCode, {headers: {'content-type': 'application/pdf'}})
-                )
-            )
-            const text = 'COVERED: yes\nANSWER: VX-4471\nEVIDENCE:\npart number VX-4471.'
-            runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
+    test('accepts a PDF quote that rejoins a code split at a line end', async () => {
+        fetchMock.mockImplementationOnce(() =>
+            Promise.resolve(new Response(splitCode, {headers: {'content-type': 'application/pdf'}}))
+        )
+        const text = 'COVERED: yes\nANSWER: VX-4471\nEVIDENCE:\npart number VX-4471.'
+        runSubagent.mockImplementationOnce(() => Promise.resolve({text, details}))
 
-            const result = await tool().execute('id', params, undefined, onUpdate, ctx)
-            expect(result.content).toEqual([{type: 'text', text}])
-        }
-    )
+        const result = await tool().execute('id', params, undefined, onUpdate, ctx)
+        expect(result.content).toEqual([{type: 'text', text}])
+    })
 
-    test.skipIf(!pdftotextReady)('stops reading a PDF when the call is cancelled', async () => {
+    test('stops reading a PDF when the call is cancelled', async () => {
         fetchMock.mockImplementationOnce(() =>
             Promise.resolve(new Response(splitCode, {headers: {'content-type': 'application/pdf'}}))
         )
@@ -150,23 +144,20 @@ describe('fetch tool', () => {
         expect(runSubagent).not.toHaveBeenCalled()
     })
 
-    test.skipIf(!pdftotextReady)(
-        'a cancel while reading a PDF error page is still a cancel',
-        async () => {
-            fetchMock.mockImplementationOnce(() =>
-                Promise.resolve(
-                    new Response(splitCode, {
-                        status: 500,
-                        headers: {'content-type': 'application/pdf'}
-                    })
-                )
+    test('a cancel while reading a PDF error page is still a cancel', async () => {
+        fetchMock.mockImplementationOnce(() =>
+            Promise.resolve(
+                new Response(splitCode, {
+                    status: 500,
+                    headers: {'content-type': 'application/pdf'}
+                })
             )
+        )
 
-            await expect(
-                tool().execute('id', params, AbortSignal.abort(), onUpdate, ctx)
-            ).rejects.toThrow(SubagentErrors.Aborted)
-        }
-    )
+        await expect(
+            tool().execute('id', params, AbortSignal.abort(), onUpdate, ctx)
+        ).rejects.toThrow(SubagentErrors.Aborted)
+    })
 
     test('joins split lines for PDFs only', async () => {
         fetchMock.mockImplementationOnce(() => Promise.resolve(page('the fuel sys-\ntem')))

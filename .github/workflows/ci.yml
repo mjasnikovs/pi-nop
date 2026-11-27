@@ -22,19 +22,8 @@ jobs:
             - uses: actions/setup-node@v7
               with:
                   node-version: 22.19.0
-            # apt and choco ship a poppler too old for -remove-hyphens; conda-forge has one version on all three.
-            - uses: mamba-org/setup-micromamba@v3
-              with:
-                  environment-name: poppler
-                  create-args: -c conda-forge poppler=26.11.0
-                  cache-environment: true
-            - name: Put pdftotext on PATH
-              shell: bash
-              run: |
-                  prefix="$MAMBA_ROOT_PREFIX/envs/poppler"
-                  if [ "$RUNNER_OS" = Windows ]; then echo "$prefix/Library/bin"; else echo "$prefix/bin"; fi >> "$GITHUB_PATH"
-            - run: pdftotext -v
             - run: bun install --frozen-lockfile
             - run: bun run lint:check
             - run: bun run test
             - run: node test/node/docs-smoke.mjs
+            - run: node test/node/pdf-smoke.mjs

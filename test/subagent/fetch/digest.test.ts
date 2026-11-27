@@ -3,7 +3,6 @@ import {describe, expect, test} from 'bun:test'
 
 import {missingFrom} from '../../../src/subagent/answer'
 import {digest, maxBytes} from '../../../src/subagent/fetch/digest'
-import {pdftotextReady} from '../../pdftotext'
 
 const response = (body: string | Uint8Array, contentType?: string): Response =>
     new Response(body, {headers: contentType === undefined ? {} : {'content-type': contentType}})
@@ -163,7 +162,7 @@ describe('digest', () => {
         ).rejects.toThrow('unsupported content type application/octet-stream')
     })
 
-    describe.skipIf(!pdftotextReady)('pdf', () => {
+    describe('pdf', () => {
         const junkFirst = Buffer.concat([Buffer.from([0xff, 0x0a]), pdf])
         test('reads a PDF and gives quotes the joined lines too', async () => {
             const page = await digest(response(pdf, 'application/pdf'))

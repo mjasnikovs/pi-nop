@@ -1,90 +1,92 @@
-import {spawn} from 'node:child_process'
+import {fileURLToPath} from 'node:url'
+
+import {getResolvedPDFJS} from 'unpdf'
+import type {PDFPageProxy} from 'unpdf/pdfjs'
 
 import {normalize} from '../answer'
 import type {Source} from '../answer'
-import {createLineReader} from '../guards/lines'
-import {onPath} from '../platform'
+import {describe} from '../describe'
 import {FetchErrors} from './errors'
 
-// `soft` keeps a hyphen that ends a line: the default joins `VX-` / `4471` into `VX4471`.
-// pdftotext on Windows ends lines with \r\n, which the split patterns would miss.
-const args = ['-remove-hyphens', 'soft', '-eol', 'unix', '-', '-']
+type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 
-const startFailure = (error: Error & {code?: string}): Error =>
-    error.code === 'ENOENT' ?
-        new Error(FetchErrors.NoPdfReader, {cause: error})
-    :   new Error(FetchErrors.Failed + error.message, {cause: error})
+// pdf.js wants a trailing slash, and on Windows fileURLToPath ends a folder in a backslash.
+const cMapUrl = fileURLToPath(new URL('cmaps', import.meta.url)) + '/'
+// pdf.js runs on microtasks only, so without this a long read freezes pi and an abort never lands.
+const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
 
-const exitFailure = (
-    usage: boolean,
-    said: string,
-    code: number | null,
-    signal: string | null
-): Error => {
-    if (usage) return new Error(FetchErrors.OldPdfReader)
-    // A crash ends mid-run, so the last line is only a warning.
-    if (signal !== null) return new Error(FetchErrors.Failed + `pdftotext stopped on ${signal}`)
-    if (said.endsWith('Incorrect password')) return new Error(FetchErrors.Locked)
-    return new Error(FetchErrors.Failed + (said || `pdftotext exited with ${code}`))
-}
+const readFailure = (error: unknown): Error =>
+    error instanceof Error && error.name === 'PasswordException' ?
+        new Error(FetchErrors.Locked, {cause: error})
+    :   new Error(FetchErrors.Failed + describe(error), {cause: error})
 
-// Not execFile: its maxBuffer caps stderr too, and a damaged PDF can warn past the page cap.
-const convert = (bytes: Uint8Array, maxBuffer: number, signal?: AbortSignal): Promise<string> =>
-    new Promise<string>((resolve, reject) => {
-        // A plain spawn runs only an .exe or .com; a .cmd needs cmd.exe.
-        const child = spawn(onPath('pdftotext', '.EXE;.COM'), args, {signal})
-        const chunks: Buffer[] = []
-        const lines = createLineReader()
-        let size = 0
-        let said = ''
-        // Usage text answers a bad command line. With these fixed options only an old pdftotext prints it.
-        let usage = false
-
-        const hear = (text: string) => {
-            for (const line of lines.take(text)) {
-                usage ||= line.startsWith('Usage:')
-                said = line
-            }
-        }
-        child.stdout.on('data', (chunk: Buffer) => {
-            size += chunk.byteLength
-            chunks.push(chunk)
-
-            if (size <= maxBuffer) return
-            child.kill()
-            reject(new Error(FetchErrors.PageTooBig))
-        })
-        child.stderr.setEncoding('utf8')
-        child.stderr.on('data', hear)
-        child.on('error', reject)
-        child.on('close', (code, killedBy) => {
-            if (code === 0) return resolve(Buffer.concat(chunks).toString())
-            hear('\n')
-            reject(exitFailure(usage, said, code, killedBy))
-        })
-        // A child that exits or is aborted before reading its input closes stdin; the EPIPE kills pi.
-        child.stdin.on('error', () => undefined)
-        child.stdin.end(bytes)
-    }).catch((error: Error & {code?: string}) => {
-        // Our own failures carry no code; a failed spawn, or onPath finding nothing, does.
-        throw error.code === undefined ? error : startFailure(error)
+const fromPdfjs = <T>(work: Promise<T>): Promise<T> =>
+    work.catch((error: unknown) => {
+        throw readFailure(error)
     })
 
-const pageBreak = '\f'
-const softHyphen = '\u00AD'
-// Only the Latin ligatures: full NFKC also turns m² into m2.
-const foldLigatures = (text: string): string =>
-    text.replace(/[\uFB00-\uFB06]/g, ligature => ligature.normalize('NFKC'))
+const chunkText = ({items}: TextContent): string =>
+    items.map(item => ('str' in item ? item.str + (item.hasEOL ? '\n' : '') : '')).join('')
 
-const clean = (text: string): string =>
-    foldLigatures(text.replaceAll(pageBreak, '').replaceAll(softHyphen, '')).trim()
+const pageText = async (
+    page: PDFPageProxy,
+    allowance: number,
+    signal?: AbortSignal
+): Promise<string> => {
+    const reader = page.streamTextContent().getReader()
+    let text = ''
+
+    try {
+        for (
+            let chunk = await fromPdfjs(reader.read());
+            !chunk.done;
+            chunk = await fromPdfjs(reader.read())
+        ) {
+            const part = chunkText(chunk.value as TextContent)
+            allowance -= Buffer.byteLength(part)
+
+            if (allowance < 0) throw new Error(FetchErrors.PageTooBig)
+            text += part
+            await nextTurn()
+            signal?.throwIfAborted()
+        }
+    } finally {
+        // With a full stream queue, the document's destroy() never settles.
+        await reader.cancel(new Error('PDF read stopped'))
+    }
+
+    return text
+}
 
 const pdfText = async (
     bytes: Uint8Array,
     maxBuffer: number,
     signal?: AbortSignal
 ): Promise<string> => {
-    const text = clean(await convert(bytes, maxBuffer, signal))
+    signal?.throwIfAborted()
+    const {getDocument} = await getResolvedPDFJS()
+    // A copy, since pdf.js refuses a Buffer and detaches the buffer it is given.
+    const task = getDocument({data: new Uint8Array(bytes), verbosity: 0, cMapUrl, cMapPacked: true})
+    const pages: string[] = []
+    let size = 0
+
+    try {
+        const pdf = await fromPdfjs(task.promise)
+
+        for (let number = 1; number <= pdf.numPages; number++) {
+            const page = await pageText(
+                await fromPdfjs(pdf.getPage(number)),
+                maxBuffer - size,
+                signal
+            )
+            size += Buffer.byteLength(page)
+            pages.push(page)
+        }
+    } finally {
+        await task.destroy()
+    }
+
+    const text = pages.join('\n\n').trim()
 
     if (text === '') throw new Error(FetchErrors.NoTextLayer)
     return text

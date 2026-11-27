@@ -1,19 +1,16 @@
-import {chmodSync, copyFileSync, readFileSync} from 'node:fs'
-import {join} from 'node:path'
-import {describe, expect, test} from 'bun:test'
+import {readFileSync} from 'node:fs'
+import {describe, expect, spyOn, test} from 'bun:test'
 
 import {missingFrom} from '../../../src/subagent/answer'
 import {FetchErrors} from '../../../src/subagent/fetch/errors'
 import {pdfText, quotable} from '../../../src/subagent/fetch/pdf'
-import {pdftotextReady} from '../../pdftotext'
-import {tempTree} from '../../tree'
 
 const fixture = (name: string): Uint8Array =>
     readFileSync(new URL(`fixtures/${name}.pdf`, import.meta.url))
 const limit = 10 * 1024 * 1024
 const read = (name: string): Promise<string> => pdfText(fixture(name), limit)
-describe.skipIf(!pdftotextReady)('pdfText', () => {
-    test('reads every page and drops the form feeds between them', async () => {
+describe('pdfText', () => {
+    test('reads every page, a blank line between them', async () => {
         expect(await read('two-pages')).toBe('First page text\n\nSecond page text')
     })
 
@@ -21,75 +18,50 @@ describe.skipIf(!pdftotextReady)('pdfText', () => {
         await expect(read('blank')).rejects.toThrow('Fetch failed: PDF has no text layer')
     })
 
-    test('reports what pdftotext said about a broken file', async () => {
+    test('reports what pdf.js said about a broken file', async () => {
         await expect(pdfText(new TextEncoder().encode('%PDF-1.4\njunk'), limit)).rejects.toThrow(
-            "Fetch failed: Syntax Error: Couldn't read xref table"
+            new Error('Fetch failed: Invalid PDF structure.')
         )
     })
 
-    // The input must outgrow the pipe buffer, or the write ends before the child dies.
-    test('an aborted run rejects as aborted and leaves the process alive', async () => {
-        await expect(pdfText(fixture('expands'), limit, AbortSignal.abort())).rejects.toMatchObject(
-            {cause: {name: 'AbortError'}}
-        )
-        expect(await read('two-pages')).toContain('First page text')
+    // A blank PDF has no text to check the signal between, so only the check before reading catches it.
+    test('an aborted signal rejects before reading', async () => {
+        await expect(pdfText(fixture('blank'), limit, AbortSignal.abort())).rejects.toMatchObject({
+            name: 'AbortError'
+        })
     })
 
-    // Windows looks in the current folder before PATH, so a cloned repo's pdftotext.exe ran.
-    test.skipIf(process.platform !== 'win32')(
-        'a pdftotext in the current folder is never run in place of the one on PATH',
-        async () => {
-            const planted = tempTree({})
-            copyFileSync(
-                join(`${process.env.SystemRoot}`, 'System32', 'whoami.exe'),
-                join(planted, 'pdftotext.exe')
-            )
-            const home = process.cwd()
-            process.chdir(planted)
-
-            try {
-                expect(await read('two-pages')).toBe('First page text\n\nSecond page text')
-            } finally {
-                process.chdir(home)
-            }
-        }
-    )
-
-    // A plain spawn cannot run a .cmd, so an earlier pdftotext.cmd must not shadow the .exe.
-    test.skipIf(process.platform !== 'win32')(
-        'a pdftotext.cmd earlier on PATH does not shadow pdftotext.exe',
-        async () => {
-            const wrapper = tempTree({'pdftotext.cmd': '@exit /b 1\r\n'})
-            const path = process.env.PATH
-            process.env.PATH = `${wrapper};${path}`
-
-            try {
-                expect(await read('two-pages')).toBe('First page text\n\nSecond page text')
-            } finally {
-                process.env.PATH = path
-            }
-        }
-    )
-
-    test('names the missing tool when pdftotext is not on PATH', async () => {
-        const path = process.env.PATH
-        process.env.PATH = '/nonexistent'
-
-        try {
-            await expect(read('two-pages')).rejects.toThrow(
-                'Fetch failed: PDF needs pdftotext (poppler) on PATH'
-            )
-        } finally {
-            process.env.PATH = path
-        }
+    test('an abort during a read stops it as aborted, not as too big', async () => {
+        const controller = new AbortController()
+        setImmediate(() => controller.abort())
+        await expect(pdfText(fixture('expands'), limit, controller.signal)).rejects.toMatchObject({
+            name: 'AbortError'
+        })
     })
 
     test('stops at the size limit on a PDF that expands past it', async () => {
         await expect(read('expands')).rejects.toThrow(FetchErrors.PageTooBig)
     })
 
-    test('reads a damaged PDF whose warnings outgrow the size limit', async () => {
-        expect(await read('noisy')).toBe('Fit only the filter')
+    test('stops inside a page whose text outgrows the size limit', async () => {
+        await expect(pdfText(fixture('one-page-bomb'), 100_000)).rejects.toThrow(
+            FetchErrors.PageTooBig
+        )
+    })
+
+    test('reads a damaged PDF without printing its warnings', async () => {
+        const warn = spyOn(console, 'warn')
+        const info = spyOn(console, 'info')
+        const log = spyOn(console, 'log')
+
+        try {
+            expect(await read('noisy')).toBe('Fit only the filter')
+            expect([warn, info, log].map(spy => spy.mock.calls.length)).toEqual([0, 0, 0])
+        } finally {
+            warn.mockRestore()
+            info.mockRestore()
+            log.mockRestore()
+        }
     })
 
     test('names a password protected PDF', async () => {
@@ -98,12 +70,17 @@ describe.skipIf(!pdftotextReady)('pdfText', () => {
         )
     })
 
+    test('reads Japanese text in a font the PDF does not embed', async () => {
+        expect(await read('sjis-noembed')).toBe('あいうえお')
+    })
+
     test('spells a ligature as plain letters and leaves other symbols alone', async () => {
         expect(await read('ligature')).toBe('configure the pump\narea 5 m²')
     })
 
-    test('joins a word split by a soft hyphen, at a line end or inside a line', async () => {
-        expect(await read('soft-hyphen')).toBe('several important points\none important line')
+    // pdf.js drops a soft hyphen before it hands out the text, so a line-end split stays split.
+    test('drops a soft hyphen, joining it only inside a line', async () => {
+        expect(await read('soft-hyphen')).toBe('several im\nportant points\none important line')
     })
 
     test('lets a quote join a word split across a page break', async () => {
@@ -117,77 +94,11 @@ describe.skipIf(!pdftotextReady)('pdfText', () => {
             'Fit only the approved replacement filter, part number VX-\n4471.'
         )
     })
-})
 
-const withFakePdftotext = async (script: string, run: () => unknown): Promise<void> => {
-    const dir = tempTree({pdftotext: `#!/bin/sh\n${script}\n`})
-    chmodSync(join(dir, 'pdftotext'), 0o755)
-    const path = process.env.PATH
-    process.env.PATH = dir
-
-    try {
-        await run()
-    } finally {
-        process.env.PATH = path
-    }
-}
-// The fake is a /bin/sh script, which Windows cannot run.
-describe.skipIf(process.platform === 'win32')('a fake pdftotext', () => {
-    test('names an old pdftotext that has no -remove-hyphens', () =>
-        withFakePdftotext('echo "Usage: pdftotext [options]" >&2\nexit 99', () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                'Fetch failed: pdftotext is too old, it needs the -remove-hyphens option of a newer poppler'
-            )
-        ))
-
-    test('reports any other exit 99 by what pdftotext said', () =>
-        withFakePdftotext('echo "Internal Error: out of memory" >&2\nexit 99', () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                'Fetch failed: Internal Error: out of memory'
-            )
-        ))
-
-    test('asks for unix line ends, which the split patterns read', () =>
-        withFakePdftotext('echo "$@" >&2\nexit 1', () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow('-eol unix')
-        ))
-
-    test('reads usage text only where a line starts with it', () =>
-        withFakePdftotext(`echo "Syntax Error: Unknown font tag 'Usage:'" >&2\nexit 1`, () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                new Error("Fetch failed: Syntax Error: Unknown font tag 'Usage:'")
-            )
-        ))
-
-    test('reports a last line with no line end', () =>
-        withFakePdftotext(`printf 'Internal Error: x' >&2\nexit 1`, () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                new Error('Fetch failed: Internal Error: x')
-            )
-        ))
-
-    test('reports a crash by its signal, not the warning before it', () =>
-        withFakePdftotext('echo "Syntax Warning: bad font" >&2\nkill -SEGV $$', () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                new Error('Fetch failed: pdftotext stopped on SIGSEGV')
-            )
-        ))
-
-    test('reports a silent failure by its exit code', () =>
-        withFakePdftotext('exit 3', () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                new Error('Fetch failed: pdftotext exited with 3')
-            )
-        ))
-
-    // Longer than a pipe read, so the reason arrives in pieces.
-    test('reports a reason line that arrives in pieces', () => {
-        const reason = 'x'.repeat(200_000)
-        return withFakePdftotext(`echo ${reason} >&2\nexit 1`, () =>
-            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-                new Error(FetchErrors.Failed + reason)
-            )
-        )
+    test('leaves the caller its bytes', async () => {
+        const bytes = fixture('two-pages')
+        await pdfText(bytes, limit)
+        expect(bytes.byteLength).toBeGreaterThan(0)
     })
 })
 
