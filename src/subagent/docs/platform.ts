@@ -9,6 +9,12 @@ const system32 = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
 const tar = process.platform === 'win32' ? join(system32, 'tar.exe') : 'tar'
 const notFound = (command: string): string => `${command} was not found`
 
+// Node says spawn npm ENOENT and Bun says Executable not found; the user gets one wording.
+const missing = (command: string, error: unknown): unknown =>
+    error instanceof Error && 'code' in error && error.code === 'ENOENT' ?
+        new Error(notFound(command))
+    :   error
+
 // On Windows which and cmd.exe search the current folder first, so a repo's own npm.cmd would run.
 const onPath = (name: string): string => {
     if (process.platform !== 'win32' || isAbsolute(name)) return name
@@ -44,4 +50,4 @@ const stop = (child: ChildProcess): void => {
         .once('exit', code => code === 0 || child.kill())
 }
 
-export {notFound, onPath, stop, tar}
+export {missing, onPath, stop, tar}

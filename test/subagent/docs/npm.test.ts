@@ -76,6 +76,39 @@ describe('view', () => {
         expect(existsSync(join(project, 'ran'))).toBe(false)
     })
 
+    // An npm.cmd with no node.exe beside it, as npm i -g npm writes, calls a bare node.
+    test.skipIf(process.platform !== 'win32')(
+        'a node in the project folder is never run by npm.cmd',
+        async () => {
+            const shim = tempTree({
+                'npm.cmd': '@node "%~dp0view.js"\r\n',
+                'view.js': `process.stdout.write('{"version":"1.0.0","dist-tags.latest":"1.0.0"}')`
+            })
+            const project = tempTree({'node.cmd': '@echo ran> "%~dp0ran"\r\n'})
+            const path = process.env.PATH
+            process.env.PATH = `${shim};${path}`
+
+            try {
+                expect((await view({name: 'zod', spec: '^4'}, project)).version).toBe('1.0.0')
+                expect(existsSync(join(project, 'ran'))).toBe(false)
+            } finally {
+                process.env.PATH = path
+            }
+        }
+    )
+
+    test('a silent npm still reports a missing package as missing', async () => {
+        process.env.npm_config_loglevel = 'silent'
+
+        try {
+            await expect(view({name: 'nope', spec: 'latest'}, cwd)).rejects.toThrow(
+                'not on npm: nope@latest (E404)'
+            )
+        } finally {
+            delete process.env.npm_config_loglevel
+        }
+    })
+
     test('no npm on PATH fails as npm failing, not as a missing package', async () => {
         const path = process.env.PATH
         process.env.PATH = ''
