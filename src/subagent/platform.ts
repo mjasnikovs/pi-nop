@@ -19,7 +19,7 @@ const isNotFound = (error: unknown): boolean =>
     error instanceof Error && 'code' in error && error.code === 'ENOENT'
 
 // On Windows which, libuv and cmd.exe search the current folder first, so a repo's own copy would run.
-const onPath = (name: string): string => {
+const onPath = (name: string, runnable = process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD'): string => {
     if (process.platform !== 'win32' || isAbsolute(name)) return name
 
     // Windows allows a quoted PATH entry, and which reads it the same way.
@@ -28,9 +28,7 @@ const onPath = (name: string): string => {
         .map(dir => dir.replace(/^"(.*)"$/, '$1'))
         .filter(dir => isAbsolute(dir))
     // An empty PATHEXT entry would match Node's extensionless npm shell script.
-    const extensions = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
-        .split(delimiter)
-        .filter(extension => extension !== '')
+    const extensions = runnable.split(delimiter).filter(extension => extension !== '')
     const found = dirs
         .flatMap(dir => extensions.map(extension => join(dir, name + extension)))
         .find(file => existsSync(file))

@@ -10,6 +10,9 @@ import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
 import {childEnv, missing, onPath, stop, tar} from '../platform'
 
+// A silent npm prints its --json error on stdout, and any stderr line must not hide it.
+const said = (...streams: string[]): string => streams.filter(text => text !== '').join('\n')
+
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
     command: string,
@@ -37,7 +40,9 @@ const run = (
             settle()
             if (code === 0) return resolve(stdout)
             reject(
-                new Error(stderr || stdout || `${command} ended with ${String(killedBy ?? code)}`)
+                new Error(
+                    said(stderr, stdout) || `${command} ended with ${String(killedBy ?? code)}`
+                )
             )
         })
     }).catch((error: unknown) => {
