@@ -31,7 +31,8 @@ const exitFailure = (
 // Not execFile: its maxBuffer caps stderr too, and a damaged PDF can warn past the page cap.
 const convert = (bytes: Uint8Array, maxBuffer: number, signal?: AbortSignal): Promise<string> =>
     new Promise<string>((resolve, reject) => {
-        const child = spawn(onPath('pdftotext'), args, {signal})
+        // A plain spawn runs only an .exe or .com; a .cmd needs cmd.exe.
+        const child = spawn(onPath('pdftotext', '.EXE;.COM'), args, {signal})
         const chunks: Buffer[] = []
         const lines = createLineReader()
         let size = 0
