@@ -87,6 +87,34 @@ describe('view', () => {
         expect(scopedHits).toBeGreaterThan(0)
     })
 
+    // On Windows npm runs under cmd.exe, and killing cmd.exe alone leaves npm running.
+    test('an abort stops npm itself, so its registry request drops', async () => {
+        const asked = Promise.withResolvers<Request>()
+        const held = Bun.serve({
+            port: 0,
+            fetch: request => {
+                asked.resolve(request)
+                return new Promise<Response>(() => undefined)
+            }
+        })
+        process.env['npm_config_@held:registry'] = `http://127.0.0.1:${held.port}/`
+        const controller = new AbortController()
+
+        try {
+            const viewing = view({name: '@held/pkg', spec: 'latest'}, cwd, controller.signal)
+            const request = await asked.promise
+            const dropped = new Promise(resolve =>
+                request.signal.addEventListener('abort', resolve)
+            )
+            controller.abort()
+            await expect(viewing).rejects.toThrow('Subagent aborted')
+            await dropped
+        } finally {
+            delete process.env['npm_config_@held:registry']
+            void held.stop(true)
+        }
+    })
+
     test('an abort is reported as an abort', async () => {
         const controller = new AbortController()
         controller.abort()
@@ -199,12 +227,18 @@ describe('download', () => {
         expect(scratchLeft()).toEqual([])
     })
 
-    test('a lost move with nothing in its place fails and leaves no scratch behind', async () => {
-        mkdirSync(cache, {recursive: true})
-        symlinkSync(join(cache, 'nowhere'), join(cache, 'gone=left-pad@1.3.0'))
-        await expect(download('gone', {name: 'left-pad', spec: '1.3.0'}, cwd)).rejects.toThrow()
-        expect(scratchLeft()).toEqual([])
-    })
+    // Windows renames over a dangling link, so there the move does not fail.
+    test.skipIf(process.platform === 'win32')(
+        'a lost move with nothing in its place fails and leaves no scratch behind',
+        async () => {
+            mkdirSync(cache, {recursive: true})
+            symlinkSync(join(cache, 'nowhere'), join(cache, 'gone=left-pad@1.3.0'))
+            await expect(download('gone', {name: 'left-pad', spec: '1.3.0'}, cwd)).rejects.toThrow(
+                'ENOTDIR'
+            )
+            expect(scratchLeft()).toEqual([])
+        }
+    )
 
     test('a tarball tar cannot read fails and leaves no scratch behind', async () => {
         await expect(download('broken', {name: 'broken', spec: '1.0.0'}, cwd)).rejects.toThrow()
