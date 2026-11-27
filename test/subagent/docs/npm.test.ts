@@ -104,9 +104,19 @@ describe('view', () => {
             await expect(view({name: 'nope', spec: 'latest'}, cwd)).rejects.toThrow(
                 'not on npm: nope@latest (E404)'
             )
+            await expect(
+                download('left-pad', {name: 'left-pad', spec: '99.0.0'}, cwd)
+            ).rejects.toThrow('not on npm: left-pad@99.0.0 (ETARGET)')
         } finally {
             delete process.env.npm_config_loglevel
         }
+    })
+
+    test('a project folder that is gone is not reported as a missing npm', async () => {
+        const gone = join(tempTree({}), 'gone')
+        const failure = view({name: 'zod', spec: '^4'}, gone)
+        await expect(failure).rejects.toThrow('npm failed: zod@^4')
+        await expect(failure).rejects.not.toThrow('npm was not found')
     })
 
     test('no npm on PATH fails as npm failing, not as a missing package', async () => {

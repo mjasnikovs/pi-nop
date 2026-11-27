@@ -1,4 +1,4 @@
-import {chmodSync, readFileSync} from 'node:fs'
+import {chmodSync, copyFileSync, readFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {describe, expect, test} from 'bun:test'
 
@@ -34,6 +34,26 @@ describe.skipIf(!pdftotextReady)('pdfText', () => {
         )
         expect(await read('two-pages')).toContain('First page text')
     })
+
+    // Windows looks in the current folder before PATH, so a cloned repo's pdftotext.exe ran.
+    test.skipIf(process.platform !== 'win32')(
+        'a pdftotext in the current folder is never run in place of the one on PATH',
+        async () => {
+            const planted = tempTree({})
+            copyFileSync(
+                join(`${process.env.SystemRoot}`, 'System32', 'whoami.exe'),
+                join(planted, 'pdftotext.exe')
+            )
+            const home = process.cwd()
+            process.chdir(planted)
+
+            try {
+                expect(await read('two-pages')).toBe('First page text\n\nSecond page text')
+            } finally {
+                process.chdir(home)
+            }
+        }
+    )
 
     test('names the missing tool when pdftotext is not on PATH', async () => {
         const path = process.env.PATH
