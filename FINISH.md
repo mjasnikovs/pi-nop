@@ -24,7 +24,7 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 11 rounds so far. Round 11 fixes are committed.
+Review loop: 12 rounds so far. Round 12 fixes are committed.
 
 ## Next steps
 
@@ -50,6 +50,8 @@ Review loop: 11 rounds so far. Round 11 fixes are committed.
   The answer text is never checked either, so it gains nothing. Speculation.
 - Also speculation: `# EVIDENCE:` inside a code block in the answer (settled rule), a stray
   closing fence when only COVERED/ANSWER are fenced.
+- Also speculation (edit the file while the panel is open): a model the registry lacks dropped
+  without a notice, no reason shown when the file breaks mid-panel.
 
 ## Not started (from the annoyance scan, older than this work)
 
