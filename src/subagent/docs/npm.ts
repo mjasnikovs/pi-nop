@@ -8,7 +8,7 @@ import spawn from 'cross-spawn'
 import {describe} from '../describe'
 import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
-import {missing, onPath, stop, tar} from './platform'
+import {childEnv, missing, onPath, stop, tar} from './platform'
 
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
@@ -19,7 +19,11 @@ const run = (
 ): Promise<string> =>
     new Promise<string>((resolve, reject) => {
         signal?.throwIfAborted()
-        const child = spawn(onPath(command), args, {cwd, stdio: ['ignore', 'pipe', 'pipe']})
+        const child = spawn(onPath(command), args, {
+            cwd,
+            env: childEnv(),
+            stdio: ['ignore', 'pipe', 'pipe']
+        })
         const abort = () => stop(child)
         let stdout = ''
         let stderr = ''
@@ -32,7 +36,9 @@ const run = (
         child.on('close', (code, killedBy) => {
             settle()
             if (code === 0) return resolve(stdout)
-            reject(new Error(stderr || `${command} ended with ${String(killedBy ?? code)}`))
+            reject(
+                new Error(stderr || stdout || `${command} ended with ${String(killedBy ?? code)}`)
+            )
         })
     }).catch((error: unknown) => {
         throw missing(command, error)
@@ -64,10 +70,11 @@ type View = {
 // npm's codes for "no such package or version". Anything else is npm or the network failing.
 const missingCodes = ['E404', 'ETARGET', 'EINVALIDTAGNAME', 'EINVALIDPACKAGENAME']
 
-// npm 10 prints `npm error code X`; npm 9 printed `npm ERR! code X`.
+// npm 10 prints `npm error code X`, npm 9 `npm ERR! code X`. A silent npm prints only its --json error.
 const npmCode = (error: unknown): string => {
     const text = describe(error)
-    return /^npm (error|ERR!) code (\S+)/m.exec(text)?.[2] ?? text
+    const found = /^npm (?:error|ERR!) code (\S+)|"code": "([^"]+)"/m.exec(text)
+    return found?.[1] ?? found?.[2] ?? text
 }
 
 // npm runs in the project, so .npmrc scopes, mirrors and auth hold, the same as an install would.

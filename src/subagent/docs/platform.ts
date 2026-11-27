@@ -36,6 +36,12 @@ const onPath = (name: string): string => {
     return found
 }
 
+// cmd.exe looks for a bare command, like the node an upgraded npm.cmd calls, in the current folder first.
+const childEnv = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    NoDefaultCurrentDirectoryInExePath: '1'
+})
+
 // cross-spawn runs npm.cmd under cmd.exe, and killing cmd.exe alone leaves npm running.
 const stop = (child: ChildProcess): void => {
     if (process.platform !== 'win32' || child.pid === undefined) {
@@ -50,4 +56,4 @@ const stop = (child: ChildProcess): void => {
         .once('exit', code => code === 0 || child.kill())
 }
 
-export {missing, onPath, stop, tar}
+export {childEnv, missing, onPath, stop, tar}
