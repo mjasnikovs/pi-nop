@@ -64,9 +64,15 @@ describe('parseAnswer', () => {
             answer: 'set it:\n```yaml\nevidence:\n  - a\n```\n**Evidence:**',
             evidence: ['foo']
         })
-        expect(
-            parseAnswer('COVERED: yes\nANSWER: x\nEvidence: line one\nevidence: true')
-        ).toBeUndefined()
+        expect(parseAnswer('Covered: yes\nAnswer: x\nEvidence: foo\nbar')?.evidence).toEqual([
+            'foo',
+            'bar'
+        ])
+        expect(parseAnswer('Covered: yes\nAnswer: set\nevidence: true\nEvidence:\nfoo')).toEqual({
+            covered: 'yes',
+            answer: 'set\nevidence: true',
+            evidence: ['foo']
+        })
         expect(
             parseAnswer('COVERED: yes\nANSWER: a\nEVIDENCE:\nEvidence: quoted')?.evidence
         ).toEqual(['Evidence: quoted'])

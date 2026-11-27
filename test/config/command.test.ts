@@ -568,6 +568,30 @@ describe('nop-config command', () => {
         expect(notify).toHaveBeenCalledWith('Error: boom', 'error')
     })
 
+    test('a save that fails is reported, not thrown into the panel', async () => {
+        writeFileSync(configPath, '{}')
+
+        const {panel} = await openPanel()
+        rmSync(configPath)
+        mkdirSync(configPath)
+        panel.handleInput(down)
+        expect(() => panel.handleInput(enter)).not.toThrow()
+        expect(notify).toHaveBeenLastCalledWith(
+            expect.stringContaining('pi-nop config not saved: EISDIR'),
+            'error'
+        )
+    })
+
+    test('a file fixed by hand while the panel is open drops its stale models too', async () => {
+        writeFileSync(configPath, 'nope')
+
+        const {panel} = await openPanel()
+        writeFileSync(configPath, '{"subagent-fetch":{"model":"acme/gone"}}')
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'off'}})
+    })
+
     test('writes nothing until a row changes', async () => {
         await openPanel()
 
