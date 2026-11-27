@@ -19,7 +19,8 @@ const docs: Record<string, Packument> = {
     }),
     '/left-pad': packument('left-pad', '1.3.0', {'1.3.0': {}}),
     '/broken': packument('broken', '1.0.0', {'1.0.0': {}}),
-    '/@acme%2fsdk': packument('@acme/sdk', '1.0.0', {'1.0.0': {}})
+    '/@acme%2fsdk': packument('@acme/sdk', '1.0.0', {'1.0.0': {}}),
+    '/untagged': {...packument('untagged', '1.0.0', {'1.0.0': {}}), 'dist-tags': {}}
 }
 const tarballs = {
     [tarballPath('left-pad', '1.3.0')]: tarball({
@@ -72,6 +73,12 @@ describe('view', () => {
         )
         await expect(view({name: 'zod', spec: '99.0.0'}, cwd)).rejects.toThrow(
             'not on npm: zod@99.0.0'
+        )
+    })
+
+    test('a package with no latest tag is "not on npm", not a JSON error', async () => {
+        await expect(view({name: 'untagged', spec: 'latest'}, cwd)).rejects.toThrow(
+            'not on npm: untagged@latest (empty)'
         )
     })
 

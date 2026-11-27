@@ -92,7 +92,8 @@ const view = async (target: Target, cwd: string, signal?: AbortSignal): Promise<
         cwd,
         signal
     )
-    const parsed = Value.Parse(viewedShape, JSON.parse(stdout))
+    // npm prints nothing, with exit 0, for a tag the package does not have.
+    const parsed = stdout.trim() === '' ? [] : Value.Parse(viewedShape, JSON.parse(stdout))
     const last = Array.isArray(parsed) ? parsed.at(-1) : parsed
 
     if (last === undefined)
