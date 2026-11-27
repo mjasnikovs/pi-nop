@@ -55,6 +55,22 @@ describe.skipIf(!pdftotextReady)('pdfText', () => {
         }
     )
 
+    // A plain spawn cannot run a .cmd, so an earlier pdftotext.cmd must not shadow the .exe.
+    test.skipIf(process.platform !== 'win32')(
+        'a pdftotext.cmd earlier on PATH does not shadow pdftotext.exe',
+        async () => {
+            const wrapper = tempTree({'pdftotext.cmd': '@exit /b 1\r\n'})
+            const path = process.env.PATH
+            process.env.PATH = `${wrapper};${path}`
+
+            try {
+                expect(await read('two-pages')).toBe('First page text\n\nSecond page text')
+            } finally {
+                process.env.PATH = path
+            }
+        }
+    )
+
     test('names the missing tool when pdftotext is not on PATH', async () => {
         const path = process.env.PATH
         process.env.PATH = '/nonexistent'
