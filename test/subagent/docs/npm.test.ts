@@ -3,6 +3,7 @@ import {existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFile
 import {join} from 'node:path'
 
 import {agentDir, getAgentDir, useAgentDir} from '../../agentDir'
+import {tempTree} from '../../tree'
 import {packument, serveRegistry, tarball, tarballPath} from './registry'
 import type {Packument} from './registry'
 
@@ -65,6 +66,14 @@ describe('view', () => {
         expect((await view({name: 'zod', spec: '^3 || ^4'}, cwd)).version).toBe('4.6.5')
         const root = await download('pad-range', {name: 'left-pad', spec: '>=1 <2'}, cwd)
         expect(existsSync(join(root, 'node_modules', 'pad-range', 'index.js'))).toBe(true)
+    })
+
+    // On Windows the lookup tried the project folder before PATH, so a cloned repo's npm.cmd ran.
+    test('an npm in the project folder is never run in place of the one on PATH', async () => {
+        const planted = '@echo off\r\necho ran> "%~dp0ran"\r\nexit /b 1\r\n'
+        const project = tempTree({'npm.cmd': planted, 'npm.bat': planted})
+        expect((await view({name: 'zod', spec: '^4'}, project)).version).toBe('4.6.5')
+        expect(existsSync(join(project, 'ran'))).toBe(false)
     })
 
     test('a missing package or version is "not on npm"', async () => {
