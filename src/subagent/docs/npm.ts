@@ -8,7 +8,7 @@ import spawn from 'cross-spawn'
 import {describe} from '../describe'
 import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
-import {stop, tar} from './platform'
+import {onPath, stop, tar} from './platform'
 
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
@@ -19,7 +19,7 @@ const run = (
 ): Promise<string> =>
     new Promise((resolve, reject) => {
         signal?.throwIfAborted()
-        const child = spawn(command, args, {cwd, stdio: ['ignore', 'pipe', 'pipe']})
+        const child = spawn(onPath(command), args, {cwd, stdio: ['ignore', 'pipe', 'pipe']})
         const abort = () => stop(child)
         let stdout = ''
         let stderr = ''
