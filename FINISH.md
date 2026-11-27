@@ -24,7 +24,7 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 6 rounds so far. CI on round 6 is green on all three OSes.
+Review loop: 7 rounds so far. Round 7 fixes are committed.
 
 ## Next steps
 
@@ -40,7 +40,8 @@ Review loop: 6 rounds so far. CI on round 6 is green on all three OSes.
 - **Title case `Evidence:` divider**: rejected, as on master. See `answer-divider-rule`.
 - **Speculation, not fixed**: a missing ComSpec, `npm pack` non-JSON stdout (probed: always JSON),
   the config re-read race, long string values in the warning, piled `.broken` copies on a
-  read-only file.
+  read-only file, a fence line with a made-up language, closing markup on
+  `**ANSWER: x**`, a fence-only answer, an empty key name, tests run as root.
 
 ## Not started (from the annoyance scan, older than this work)
 

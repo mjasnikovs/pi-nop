@@ -344,6 +344,7 @@ describe('nop-config command', () => {
         await registered().handler('', makeCtx('rpc'))
 
         expect(notify.mock.calls.map(([, level]) => level)).toEqual(['warning', 'info'])
+        expect(notify.mock.calls[0]?.[0]).toEndWith('until it is fixed. Fix the file by hand.')
         expect(notify.mock.calls[1]?.[0]).toBe(
             'subagent.model: inherit\n'
                 + 'subagent.thinkingLevel: inherit\n'
@@ -406,7 +407,7 @@ describe('nop-config command', () => {
         expect(notify).toHaveBeenCalledTimes(1)
         expect(notify).toHaveBeenCalledWith(
             `pi-nop config ${configPath} is broken: not valid JSON. Every pi-nop setting uses its `
-                + 'default until it is fixed. Run /nop-config to fix it.',
+                + 'default until it is fixed. Change a setting here to copy it aside and start fresh.',
             'warning'
         )
         expect(panel.render(60).join('\n')).not.toContain('nope')
@@ -644,10 +645,11 @@ describe('nop-config command', () => {
         panel.handleInput(down)
         panel.handleInput(enter)
         chmodSync(configPath, 0o644)
+        expect(panel.render(60).find(line => line.includes('> thinking'))).toContain('inherit')
         notify.mockClear()
         panel.handleInput(enter)
         expect(notify).not.toHaveBeenCalled()
-        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'minimal'}})
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'off'}})
     })
 
     test('a file fixed by hand while the panel is open drops its stale models too', async () => {

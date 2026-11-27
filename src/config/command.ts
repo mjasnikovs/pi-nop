@@ -56,6 +56,9 @@ const row = (config: NopConfig, models: string[], setting: Setting): SettingItem
     :   {values: offered(setting)})
 })
 
+const savedValue = (config: NopConfig, id: string): string =>
+    String(read(config, settings.find(setting => setting.id === id) as Setting))
+
 const sections = [...new Set(settings.map(setting => setting.section))]
 const same = (text: string): string => text
 
@@ -120,7 +123,11 @@ export default function (pi: ExtensionAPI) {
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)
-            let config = dropStaleModels(loadSafely(ctx).config, available)
+            const fix =
+                ctx.mode === 'tui' ?
+                    'Change a setting here to copy it aside and start fresh.'
+                :   'Fix the file by hand.'
+            let config = dropStaleModels(loadSafely(ctx, fix).config, available)
 
             if (ctx.mode !== 'tui') {
                 ctx.ui.notify(
@@ -147,6 +154,7 @@ export default function (pi: ExtensionAPI) {
                                 saveConfig(next)
                                 config = next
                             } catch (failure) {
+                                list.updateValue(id, savedValue(config, id))
                                 ctx.ui.notify(
                                     `pi-nop config not saved: ${describe(failure)}`,
                                     'error'
