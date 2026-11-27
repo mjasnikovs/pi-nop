@@ -1147,7 +1147,8 @@ describe('extension', () => {
         await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/fake/cwd'))
 
         expect(notify).toHaveBeenCalledWith(
-            'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.',
+            `pi-nop config ${configPath} is broken: not valid JSON. Every pi-nop setting uses its `
+                + 'default until it is fixed. Run /nop-config to fix it.',
             'warning'
         )
         expect(createAgentSession).toHaveBeenCalledWith(
@@ -1295,7 +1296,10 @@ describe('extension', () => {
 
         await named('subagent-fetch').execute('id', {task: 'task'}, undefined, undefined, ctx('/c'))
 
-        expect(notify).toHaveBeenCalledWith(expect.stringContaining('config is broken'), 'warning')
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringContaining('is broken: not valid JSON'),
+            'warning'
+        )
         expect(createAgentSession).toHaveBeenLastCalledWith(
             expect.objectContaining({thinkingLevel: 'xhigh', model: hostModel})
         )

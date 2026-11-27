@@ -87,6 +87,7 @@ useAgentDir()
 
 beforeEach(() => {
     rmSync(configPath, {force: true})
+    rmSync(`${configPath}.broken`, {force: true})
     notify.mockClear()
     custom.mockClear()
     getAvailable.mockClear()
@@ -388,19 +389,41 @@ describe('nop-config command', () => {
         expect(loadConfig()).toEqual({subagent: {model: 'acme/fast'}})
     })
 
-    test('warns once and opens empty when the file is broken', async () => {
+    test('warns once, opens empty, and keeps the broken file aside on the first save', async () => {
         writeFileSync(configPath, 'nope')
 
         const {panel} = await openPanel()
         expect(notify).toHaveBeenCalledTimes(1)
         expect(notify).toHaveBeenCalledWith(
-            'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.',
+            `pi-nop config ${configPath} is broken: not valid JSON. Every pi-nop setting uses its `
+                + 'default until it is fixed. Run /nop-config to fix it.',
             'warning'
         )
         expect(panel.render(60).join('\n')).not.toContain('nope')
         panel.handleInput(down)
         panel.handleInput(enter)
         expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'off'}})
+        expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('nope')
+        expect(notify).toHaveBeenLastCalledWith(
+            `Saved the broken pi-nop config as ${configPath}.broken`,
+            'info'
+        )
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('nope')
+    })
+
+    test('the warning names the bad key and its value, or a key that is not a setting', async () => {
+        writeFileSync(configPath, '{"subagent":{"thinkingLevel":"inherit"}}')
+        await registered().handler('', makeCtx('rpc'))
+        expect(notify.mock.calls[0]?.[0]).toContain(
+            'is broken: subagent.thinkingLevel is "inherit".'
+        )
+
+        notify.mockClear()
+        writeFileSync(configPath, '{"subagnt":{}}')
+        await registered().handler('', makeCtx('rpc'))
+        expect(notify.mock.calls[0]?.[0]).toContain('is broken: subagnt is not a setting.')
     })
 
     test('shows a stale model as inherit and drops it on the next save', async () => {
