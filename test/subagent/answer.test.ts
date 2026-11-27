@@ -51,7 +51,7 @@ describe('parseAnswer', () => {
 
     test('a fence tag of any kind is no quote', () => {
         const source = [{text: 'public int X = 1;', wholeLines: true}]
-        for (const fence of ['```c#', '```ts title="a.ts"', '```js {1,3}', '~~~ f#'])
+        for (const fence of ['```c#', '```ts title="a b.ts"', '```js {1,3}', '~~~ f#', '````md'])
             expect(() =>
                 verifyAnswer(
                     `COVERED: yes\nANSWER: x\nEVIDENCE:\n${fence}\npublic int X = 1;\n${fence.slice(0, 3)}`,
@@ -87,7 +87,13 @@ describe('parseAnswer', () => {
 
     test('a line that only starts with a fence is a quote and is checked', () => {
         const source = [{text: 'real line here\nconst a = 1', wholeLines: true}]
-        for (const invented of ['```rm -rf / is safe```', '~~~invented claim~~~'])
+        for (const invented of [
+            '```rm -rf / is safe```',
+            '~~~invented claim~~~',
+            '```Foo returns 42 on every call',
+            '~~~ invented claim',
+            '```ts but this is a claim'
+        ])
             expect(() =>
                 verifyAnswer(
                     `COVERED: yes\nANSWER: x\nEVIDENCE:\nreal line here\n${invented}`,

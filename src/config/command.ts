@@ -126,7 +126,7 @@ export default function (pi: ExtensionAPI) {
             const fix =
                 ctx.mode === 'tui' ?
                     'Change a setting here to copy it aside and start fresh.'
-                :   'Fix the file by hand.'
+                :   undefined
             let config = dropStaleModels(loadSafely(ctx, fix).config, available)
 
             if (ctx.mode !== 'tui') {

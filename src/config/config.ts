@@ -223,7 +223,11 @@ const brokenReason = (): string => {
 
 type Loaded = {config: NopConfig; broken: boolean}
 
-const loadSafely = (ctx?: ExtensionContext, fix = 'Run /nop-config to fix it.'): Loaded => {
+// Outside the tui /nop-config only prints the values.
+const fixHint = (ctx?: ExtensionContext): string =>
+    ctx?.mode === 'tui' ? 'Run /nop-config to fix it.' : 'Fix the file by hand.'
+
+const loadSafely = (ctx?: ExtensionContext, fix = fixHint(ctx)): Loaded => {
     try {
         return {config: loadConfig(), broken: false}
     } catch {

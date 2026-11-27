@@ -1133,14 +1133,26 @@ describe('extension', () => {
     const getAvailable = mock(() => [registryModel])
     const hostModel = {provider: 'host', id: 'current'}
     const notify = mock((_message: string, _level: string) => undefined)
-    const ctx = (cwd: string) =>
+    const ctx = (cwd: string, mode = 'tui') =>
         ({
             cwd,
+            mode,
             model: hostModel,
             thinkingLevel: 'xhigh',
             modelRegistry: {getAvailable},
             ui: {notify}
         }) as unknown as Parameters<SubagentTool['execute']>[4]
+    test('outside the tui a broken config says to fix the file by hand', async () => {
+        writeFileSync(configPath, 'nope')
+
+        await registeredTool().execute('id', {task: 'task'}, undefined, undefined, ctx('/x', 'rpc'))
+
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringMatching(/until it is fixed\. Fix the file by hand\.$/),
+            'warning'
+        )
+    })
+
     test('warns and uses the host model and thinking level when the config is broken', async () => {
         writeFileSync(configPath, 'nope')
 

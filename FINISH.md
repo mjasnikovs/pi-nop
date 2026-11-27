@@ -24,7 +24,7 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 9 rounds so far. Round 9 fixes are committed.
+Review loop: 10 rounds so far. Round 10 fixes are committed.
 
 ## Next steps
 
@@ -44,7 +44,8 @@ Review loop: 9 rounds so far. Round 9 fixes are committed.
   `**ANSWER: x**`, a fence-only answer, an empty key name, tests run as root, the panel hint on
   an unreadable file, a row reset while the same key changed outside, reordered keys, the
   tool-call hint outside the tui, a dressed `- EVIDENCE:` inside the answer (settled rule), a
-  reply written all as a blockquote.
+  reply written all as a blockquote, a ```madeUpName fence tag (one word, no claim), panel
+  messages when a broken or changed file also cannot be written.
 
 ## Not started (from the annoyance scan, older than this work)
 
