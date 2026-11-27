@@ -3,6 +3,7 @@ import {spawn} from 'node:child_process'
 import {normalize} from '../answer'
 import type {Source} from '../answer'
 import {createLineReader} from '../guards/lines'
+import {onPath} from '../platform'
 import {FetchErrors} from './errors'
 
 // `soft` keeps a hyphen that ends a line: the default joins `VX-` / `4471` into `VX4471`.
@@ -29,8 +30,8 @@ const exitFailure = (
 
 // Not execFile: its maxBuffer caps stderr too, and a damaged PDF can warn past the page cap.
 const convert = (bytes: Uint8Array, maxBuffer: number, signal?: AbortSignal): Promise<string> =>
-    new Promise((resolve, reject) => {
-        const child = spawn('pdftotext', args, {signal})
+    new Promise<string>((resolve, reject) => {
+        const child = spawn(onPath('pdftotext'), args, {signal})
         const chunks: Buffer[] = []
         const lines = createLineReader()
         let size = 0
@@ -54,7 +55,7 @@ const convert = (bytes: Uint8Array, maxBuffer: number, signal?: AbortSignal): Pr
         })
         child.stderr.setEncoding('utf8')
         child.stderr.on('data', hear)
-        child.on('error', error => reject(startFailure(error)))
+        child.on('error', reject)
         child.on('close', (code, killedBy) => {
             if (code === 0) return resolve(Buffer.concat(chunks).toString())
             hear('\n')
@@ -63,6 +64,9 @@ const convert = (bytes: Uint8Array, maxBuffer: number, signal?: AbortSignal): Pr
         // A child that exits or is aborted before reading its input closes stdin; the EPIPE kills pi.
         child.stdin.on('error', () => undefined)
         child.stdin.end(bytes)
+    }).catch((error: Error & {code?: string}) => {
+        // Our own failures carry no code; a failed spawn, or onPath finding nothing, does.
+        throw error.code === undefined ? error : startFailure(error)
     })
 
 const pageBreak = '\f'

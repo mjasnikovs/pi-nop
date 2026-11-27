@@ -8,7 +8,7 @@ import spawn from 'cross-spawn'
 import {describe} from '../describe'
 import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
-import {childEnv, missing, onPath, stop, tar} from './platform'
+import {childEnv, missing, onPath, stop, tar} from '../platform'
 
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
@@ -41,7 +41,7 @@ const run = (
             )
         })
     }).catch((error: unknown) => {
-        throw missing(command, error)
+        throw missing(command, error, cwd)
     })
 
 enum NpmErrors {
@@ -97,6 +97,8 @@ const viewed = Type.Object({
     'dist-tags.latest': Type.String()
 })
 const viewedShape = Type.Union([viewed, Type.Array(viewed)])
+// --json, so a silent npm still prints its error code.
+const packed = Type.Array(Type.Object({filename: Type.String()}))
 
 // `name` and `version` always exist, so the answer is an object, or an array of them for a range.
 const view = async (target: Target, cwd: string, signal?: AbortSignal): Promise<View> => {
@@ -107,7 +109,7 @@ const view = async (target: Target, cwd: string, signal?: AbortSignal): Promise<
         cwd,
         signal
     )
-    // npm prints nothing, with exit 0, for a tag the package does not have.
+    // npm prints nothing, with exit 0, for a package with no latest tag.
     const parsed = stdout.trim() === '' ? [] : Value.Parse(viewedShape, JSON.parse(stdout))
     const last = Array.isArray(parsed) ? parsed.at(-1) : parsed
 
@@ -172,6 +174,7 @@ const unpack = async (
         target,
         [
             'pack',
+            '--json',
             '--ignore-scripts',
             '--pack-destination',
             scratch,
@@ -181,7 +184,7 @@ const unpack = async (
         cwd,
         signal
     )
-    const tarball = join(scratch, stdout.trim().split('\n').at(-1) ?? '')
+    const tarball = join(scratch, Value.Parse(packed, JSON.parse(stdout))[0]?.filename ?? '')
     const dir = join(scratch, 'tree', 'node_modules', asked)
     mkdirSync(dir, {recursive: true})
     await run(tar, ['-xzf', tarball, '-C', dir, '--strip-components=1'], undefined, signal).catch(
