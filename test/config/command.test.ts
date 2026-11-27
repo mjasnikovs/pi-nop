@@ -424,6 +424,17 @@ describe('nop-config command', () => {
         expect(readFileSync(`${configPath}.broken-2`, 'utf8')).toBe('second')
     })
 
+    test('a broken file fixed by hand while the panel is open is kept, not set aside', async () => {
+        writeFileSync(configPath, 'nope')
+
+        const {panel} = await openPanel()
+        writeFileSync(configPath, '{"concurrency":1}')
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({concurrency: 1, subagent: {thinkingLevel: 'off'}})
+        expect(existsSync(`${configPath}.broken`)).toBe(false)
+    })
+
     test('a broken file removed while the panel is open does not stop the save', async () => {
         writeFileSync(configPath, 'nope')
 
@@ -452,6 +463,18 @@ describe('nop-config command', () => {
         writeFileSync(configPath, '{"subagnt":{}}')
         await registered().handler('', makeCtx('rpc'))
         expect(notify.mock.calls[0]?.[0]).toContain('is broken: subagnt is not a setting.')
+
+        notify.mockClear()
+        writeFileSync(configPath, '{"subagent.model":"acme/fast"}')
+        await registered().handler('', makeCtx('rpc'))
+        expect(notify.mock.calls[0]?.[0]).toContain(
+            'is broken: subagent.model goes nested, as {"subagent": {"model": ...}}.'
+        )
+
+        notify.mockClear()
+        writeFileSync(configPath, '{"subagent":[1,2,3]}')
+        await registered().handler('', makeCtx('rpc'))
+        expect(notify.mock.calls[0]?.[0]).toContain('is broken: subagent is a list.')
 
         notify.mockClear()
         writeFileSync(configPath, '{"a/b":1}')

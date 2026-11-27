@@ -172,7 +172,21 @@ const saveConfig = (config: NopConfig): void => {
 const valueAt = (value: unknown, keys: string[]): unknown =>
     keys.reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], value)
 
-// typebox writes a/b and a.b the same in a path, so an unknown key is named from its own error.
+// typebox does not escape / in a path, so an unknown key is read from its own error.
+// The panel lists settings as subagent.model, which a user may copy into the file flat.
+const unknownKey = (key: string): string => {
+    const [head, tail] = path(key)
+    return settings.some(setting => setting.id === key) && tail !== undefined ?
+            `${key} goes nested, as {"${head}": {"${tail}": ...}}`
+        :   `${key} is not a setting`
+}
+
+// A list or an object could be any size, and the warning is one line.
+const shown = (value: unknown): string => {
+    if (Array.isArray(value)) return 'a list'
+    return typeof value === 'object' && value !== null ? 'an object' : JSON.stringify(value)
+}
+
 const schemaFault = (value: unknown): string => {
     const errors = Value.Errors(configSchema, value)
     const unknown = errors.find(error => error.keyword === 'additionalProperties')
@@ -181,11 +195,11 @@ const schemaFault = (value: unknown): string => {
 
     if (unknown !== undefined) {
         const [name] = (unknown.params as {additionalProperties: string[]}).additionalProperties
-        return `${[...keys, name].join('.')} is not a setting`
+        return unknownKey([...keys, name].join('.'))
     }
 
     if (keys.length === 0) return 'not a JSON object'
-    return `${keys.join('.')} is ${JSON.stringify(valueAt(value, keys))}`
+    return `${keys.join('.')} is ${shown(valueAt(value, keys))}`
 }
 
 const brokenReason = (): string => {
@@ -225,11 +239,8 @@ const freeAside = (taken: number): string => {
     return existsSync(aside) ? freeAside(taken + 1) : aside
 }
 
-// The first save over a broken file would lose what the user wrote, so it moves aside first,
-// never over an earlier copy. A file removed meanwhile has nothing left to keep.
-const setAsideBroken = (): string | undefined => {
-    if (!existsSync(configPath())) return undefined
-
+// A save over a broken file would lose what the user wrote, so it moves aside, past older copies.
+const setAsideBroken = (): string => {
     const aside = freeAside(0)
     renameSync(configPath(), aside)
     return aside
