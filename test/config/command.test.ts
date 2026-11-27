@@ -6,6 +6,7 @@ import type {
 } from '@earendil-works/pi-coding-agent'
 import type {Component} from '@earendil-works/pi-tui'
 import {
+    chmodSync,
     existsSync,
     lstatSync,
     mkdirSync,
@@ -624,26 +625,25 @@ describe('nop-config command', () => {
         writeFileSync(configPath, '{}')
 
         const {panel} = await openPanel()
-        rmSync(configPath)
-        mkdirSync(configPath)
+        chmodSync(configPath, 0o444)
         panel.handleInput(down)
         expect(() => panel.handleInput(enter)).not.toThrow()
+        chmodSync(configPath, 0o644)
         expect(notify).toHaveBeenLastCalledWith(
             expect.stringContaining('pi-nop config not saved: '),
             'error'
         )
+        expect(loadConfig()).toEqual({})
     })
 
     test('a change that was not saved is not kept, so the next save reports no outside edit', async () => {
         writeFileSync(configPath, '{}')
 
         const {panel} = await openPanel()
-        rmSync(configPath)
-        mkdirSync(configPath)
+        chmodSync(configPath, 0o444)
         panel.handleInput(down)
         panel.handleInput(enter)
-        rmSync(configPath, {recursive: true})
-        writeFileSync(configPath, '{}')
+        chmodSync(configPath, 0o644)
         notify.mockClear()
         panel.handleInput(enter)
         expect(notify).not.toHaveBeenCalled()
