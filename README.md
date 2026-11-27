@@ -86,7 +86,7 @@ and 1 file written outside the plan. Run `/plan` again to see which steps are do
 `model` is `provider/id`, as pi lists it. `thinkingLevel` is `off`, `minimal`, `low`, `medium`,
 `high`, `xhigh` or `max`. One unknown key or bad value makes pi-nop ignore the whole file, with a
 warning that names it. The first `/nop-config` change then saves the old file as
-`pi-nop.json.broken`. A model pi no longer lists falls back to pi's current one, with a warning.
+`pi-nop.json.broken`, or `.broken-2` and on when older copies are there. A model pi no longer lists falls back to pi's current one, with a warning.
 
 `PI_NOP_SEARCH_ENGINE` overrides the engine. `PI_NOP_SEARCH_ENDPOINT` overrides its URL.
 

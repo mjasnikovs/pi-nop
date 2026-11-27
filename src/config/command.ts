@@ -78,25 +78,29 @@ const dropStaleModels = (config: NopConfig, models: string[]): NopConfig =>
             :   applyChange(fixed, modelOf(tool).id, inherit)
     }, config)
 
-// The file may have been fixed, or removed, since the panel opened; only a still broken one moves.
-const keepWritten = (
+// Another editor may have changed the file since the panel opened. Its edits are kept, and a
+// file that is broken now is copied aside before this save replaces it.
+const synced = (
     ctx: ExtensionCommandContext,
     config: NopConfig,
     available: string[]
 ): NopConfig => {
     const now = loadSafely()
 
-    if (!now.broken) {
+    if (now.broken) {
+        ctx.ui.notify(`Saved the broken pi-nop config as ${setAsideBroken()}`, 'info')
+        return config
+    }
+
+    const fresh = dropStaleModels(now.config, available)
+
+    if (JSON.stringify(fresh) !== JSON.stringify(config))
         ctx.ui.notify(
             'pi-nop config changed while the panel was open; this change went into the new one. '
                 + 'Reopen /nop-config to see every value.',
             'info'
         )
-        return dropStaleModels(now.config, available)
-    }
-
-    ctx.ui.notify(`Saved the broken pi-nop config as ${setAsideBroken()}`, 'info')
-    return config
+    return fresh
 }
 
 const availableModels = (ctx: ExtensionCommandContext): string[] =>
@@ -117,9 +121,7 @@ export default function (pi: ExtensionAPI) {
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)
-            const loaded = loadSafely(ctx)
-            let config = dropStaleModels(loaded.config, available)
-            let broken = loaded.broken
+            let config = dropStaleModels(loadSafely(ctx).config, available)
 
             if (ctx.mode !== 'tui') {
                 ctx.ui.notify(
@@ -142,9 +144,7 @@ export default function (pi: ExtensionAPI) {
                         getSettingsListTheme(),
                         (id, value) => {
                             try {
-                                if (broken) config = keepWritten(ctx, config, available)
-                                broken = false
-                                config = applyChange(config, id, value)
+                                config = applyChange(synced(ctx, config, available), id, value)
                                 saveConfig(config)
                             } catch (failure) {
                                 ctx.ui.notify(

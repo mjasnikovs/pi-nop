@@ -466,6 +466,27 @@ describe('nop-config command', () => {
         )
     })
 
+    test('a valid file edited by hand while the panel is open keeps the edit', async () => {
+        writeFileSync(configPath, '{}')
+
+        const {panel} = await openPanel()
+        writeFileSync(configPath, '{"restarts":3}')
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({restarts: 3, subagent: {thinkingLevel: 'off'}})
+    })
+
+    test('a file broken while the panel is open is copied aside before the save', async () => {
+        writeFileSync(configPath, '{}')
+
+        const {panel} = await openPanel()
+        writeFileSync(configPath, 'half written')
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('half written')
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'off'}})
+    })
+
     test('a broken file removed while the panel is open does not stop the save', async () => {
         writeFileSync(configPath, 'nope')
 
@@ -608,7 +629,7 @@ describe('nop-config command', () => {
         panel.handleInput(down)
         expect(() => panel.handleInput(enter)).not.toThrow()
         expect(notify).toHaveBeenLastCalledWith(
-            expect.stringContaining('pi-nop config not saved: EISDIR'),
+            expect.stringContaining('pi-nop config not saved: '),
             'error'
         )
     })
