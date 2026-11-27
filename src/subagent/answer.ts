@@ -50,20 +50,15 @@ type Answer = {
 const isCoverage = (value: string): value is Coverage =>
     (coverages as readonly string[]).includes(value)
 
-// Models dress a label as **COVERED:**, `Answer`: or Evidence:. Markup after the colon closes
-// the label only when a space or the line end follows it, since content may start with it.
-const labelPattern = (label: string): RegExp =>
-    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, 'i')
+// A markup run after the colon closes a dressed label, as in **COVERED:**, only before a space.
+const labelPattern = (label: string, flags: string): RegExp =>
+    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, flags)
 
+// EVIDENCE is searched for, and an answer may say evidence, so only it must be in capitals.
 const labelled = (line: string | undefined, label: string): string | undefined => {
-    const found = line === undefined ? null : labelPattern(label).exec(line)
+    const found =
+        line === undefined ? null : labelPattern(label, label === 'EVIDENCE' ? '' : 'i').exec(line)
     return found === null || line === undefined ? undefined : line.slice(found[0].length).trim()
-}
-
-// An answer line may read `evidence: true`, so the label in capitals or alone wins; else the last.
-const isDivider = (line: string): boolean => {
-    const rest = labelled(line, 'EVIDENCE')
-    return rest !== undefined && (rest === '' || line.includes('EVIDENCE'))
 }
 
 // A reply wrapped whole in a code fence still has its labels inside it.
@@ -76,15 +71,12 @@ const parseAnswer = (text: string): Answer | undefined => {
     const trimmed = lines.map(line => line.trim())
     const coveredAt = trimmed.findIndex(isContent)
     const answerAt = trimmed.findIndex((line, index) => index > coveredAt && isContent(line))
-    const strict = trimmed.findIndex((line, index) => index > answerAt && isDivider(line))
-    const loose = trimmed.findLastIndex(
+    const divider = trimmed.findIndex(
         (line, index) => index > answerAt && labelled(line, 'EVIDENCE') !== undefined
     )
-    const divider = strict === -1 ? loose : strict
-    // `Yes.` is yes; `yesterday` is not a coverage.
-    const covered = /^[a-z]+/.exec(
-        labelled(trimmed[coveredAt], 'COVERED')?.toLowerCase() ?? ''
-    )?.[0]
+    // `**Yes.**` is yes; `yesterday` is not a coverage.
+    const said = labelled(trimmed[coveredAt], 'COVERED')?.replace(/[*_`]/g, '').toLowerCase()
+    const covered = /^[a-z]+/.exec(said ?? '')?.[0]
     const first = labelled(trimmed[answerAt], 'ANSWER')
 
     if (covered === undefined || !isCoverage(covered)) return undefined

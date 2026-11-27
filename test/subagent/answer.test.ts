@@ -37,7 +37,8 @@ describe('parseAnswer', () => {
             answer: 'use `pad()`',
             evidence: ['export const pad']
         })
-        expect(parseAnswer('Covered: partial\nanswer: x\nEvidence: y')?.covered).toBe('partial')
+        expect(parseAnswer('Covered: partial\nanswer: x\nEVIDENCE: y')?.covered).toBe('partial')
+        expect(parseAnswer('COVERED: **yes**\nANSWER: x\nEVIDENCE:\ny')?.covered).toBe('yes')
         expect(parseAnswer('COVERED: yes\nANSWER:`pad()` pads\nEVIDENCE:\ny')?.answer).toBe(
             '`pad()` pads'
         )
@@ -48,7 +49,7 @@ describe('parseAnswer', () => {
         expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
     })
 
-    test('an answer line that only mentions evidence does not end the answer', () => {
+    test('only EVIDENCE in capitals ends the answer, so an answer may say evidence', () => {
         const text =
             'COVERED: yes\nANSWER: config:\nevidence: true\n* Evidence: kept\nEVIDENCE:\nfoo'
         expect(parseAnswer(text)).toEqual({
@@ -56,6 +57,16 @@ describe('parseAnswer', () => {
             answer: 'config:\nevidence: true\n* Evidence: kept',
             evidence: ['foo']
         })
+        const yaml =
+            'COVERED: yes\nANSWER: set it:\n```yaml\nevidence:\n  - a\n```\n**Evidence:**\nEVIDENCE:\nfoo'
+        expect(parseAnswer(yaml)).toEqual({
+            covered: 'yes',
+            answer: 'set it:\n```yaml\nevidence:\n  - a\n```\n**Evidence:**',
+            evidence: ['foo']
+        })
+        expect(
+            parseAnswer('COVERED: yes\nANSWER: x\nEvidence: line one\nevidence: true')
+        ).toBeUndefined()
         expect(
             parseAnswer('COVERED: yes\nANSWER: a\nEVIDENCE:\nEvidence: quoted')?.evidence
         ).toEqual(['Evidence: quoted'])

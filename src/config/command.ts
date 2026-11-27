@@ -77,6 +77,15 @@ const dropStaleModels = (config: NopConfig, models: string[]): NopConfig =>
             :   applyChange(fixed, modelOf(tool).id, inherit)
     }, config)
 
+// The file may have been fixed, or removed, since the panel opened; only a still broken one moves.
+const keepWritten = (ctx: ExtensionCommandContext, config: NopConfig): NopConfig => {
+    const now = loadSafely()
+
+    if (!now.broken) return now.config
+    ctx.ui.notify(`Saved the broken pi-nop config as ${setAsideBroken()}`, 'info')
+    return config
+}
+
 const availableModels = (ctx: ExtensionCommandContext): string[] =>
     ctx.modelRegistry.getAvailable().map(modelSpec)
 
@@ -119,10 +128,8 @@ export default function (pi: ExtensionAPI) {
                         Math.min(items.length, maxVisible),
                         getSettingsListTheme(),
                         (id, value) => {
-                            const aside = broken ? setAsideBroken() : undefined
+                            if (broken) config = keepWritten(ctx, config)
                             broken = false
-                            if (aside !== undefined)
-                                ctx.ui.notify(`Saved the broken pi-nop config as ${aside}`, 'info')
                             config = applyChange(config, id, value)
                             saveConfig(config)
                         },
