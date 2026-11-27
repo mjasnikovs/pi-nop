@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pi-nop",
+      "name": "@mjasnikovs/pi-nop",
       "dependencies": {
         "@mozilla/readability": "0.6.0",
         "linkedom": "0.18.13",
