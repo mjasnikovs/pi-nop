@@ -56,7 +56,7 @@ const typesModule = (module: string): string | undefined => {
 
 // A subpath segment of `.` or `..` would resolve into another package.
 const assertPackage = (module: string): void => {
-    const dotted = module.split('/').some(segment => segment === '.' || segment === '..')
+    const dotted = module.split(/[\\/]/).some(segment => segment === '.' || segment === '..')
 
     if (dotted || !packageNamePattern.test(packageName(module)))
         throw new Error(LocateErrors.BadName + module)

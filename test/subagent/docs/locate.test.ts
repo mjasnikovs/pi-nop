@@ -45,7 +45,8 @@ describe('assertPackage', () => {
             'hono/../other',
             'hono/./x',
             'foo\\..\\..\\x',
-            '@scope\\..\\x/y'
+            '@scope\\..\\x/y',
+            'hono/..\\..\\secret/x'
         ])
             expect(() => assertPackage(module)).toThrow(LocateErrors.BadName)
     })

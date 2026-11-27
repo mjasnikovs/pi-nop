@@ -2,7 +2,7 @@ import {execFileSync} from 'node:child_process'
 import {readFileSync} from 'node:fs'
 import {join} from 'node:path'
 
-import {tar} from '../../../src/subagent/docs/tar'
+import {tar} from '../../../src/subagent/docs/platform'
 import {tempTree} from '../../tree'
 import type {Files} from '../../tree'
 
