@@ -112,6 +112,46 @@ describe('view', () => {
         }
     })
 
+    test('a warning on stderr does not hide the code a silent npm prints on stdout', async () => {
+        const warn = join(
+            tempTree({'warn.cjs': "process.stderr.write('a warning\\n')"}),
+            'warn.cjs'
+        )
+        process.env.npm_config_loglevel = 'silent'
+        process.env.NODE_OPTIONS = `--require "${warn}"`
+
+        try {
+            await expect(view({name: 'nope', spec: 'latest'}, cwd)).rejects.toThrow(
+                'not on npm: nope@latest (E404)'
+            )
+        } finally {
+            delete process.env.npm_config_loglevel
+            delete process.env.NODE_OPTIONS
+        }
+    })
+
+    // which reads a quoted PATH entry, and an empty PATHEXT entry must not match the bare npm script.
+    test.skipIf(process.platform !== 'win32')(
+        'a quoted PATH entry is searched and an extensionless npm is skipped',
+        async () => {
+            const shim = tempTree({
+                'npm.cmd': '@node "%~dp0view.js"\r\n',
+                'view.js': `process.stdout.write('{"version":"1.0.0","dist-tags.latest":"1.0.0"}')`
+            })
+            const bare = tempTree({npm: '#!/bin/sh\nexit 1\n'})
+            const {PATH: path, PATHEXT: extensions} = process.env
+            process.env.PATH = `${bare};"${shim}";${path}`
+            process.env.PATHEXT = `${extensions};`
+
+            try {
+                expect((await view({name: 'zod', spec: '^4'}, cwd)).version).toBe('1.0.0')
+            } finally {
+                process.env.PATH = path
+                process.env.PATHEXT = extensions
+            }
+        }
+    )
+
     test('a project folder that is gone is not reported as a missing npm', async () => {
         const gone = join(tempTree({}), 'gone')
         const failure = view({name: 'zod', spec: '^4'}, gone)
