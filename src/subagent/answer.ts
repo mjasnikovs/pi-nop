@@ -61,30 +61,34 @@ const labelled = (line: string | undefined, label: string, flags = 'i'): string 
     return found === null ? undefined : line.slice(found[0].length).trim()
 }
 
-// A fence line wraps content and is none. Its tag is one word, as c#, then attributes, as
-// title="a" or {1,3}. Any other text after a fence is a quote to check.
+// A fence tag is one word, as c#, then attributes, as title="a". Other text is a quote.
 const fence = /^(?:`{3,}|~{3,})\s*[^\s`~]*(?:\s+(?:[\w-]+=(?:"[^"]*"|\S+)|\{[^}]*\}))*$/
 const isContent = (line: string): boolean => line !== '' && !fence.test(line)
 
-// Labels are found on trimmed lines, but the answer keeps its raw lines: blank lines and
-// indentation are part of a copied code block.
+// Capitals only, so the answer may say Evidence:. The first splits, so no quote hides above it.
+const dividerAt = (trimmed: string[], answerAt: number): number =>
+    trimmed.findIndex(
+        (line, index) => index > answerAt && labelled(line, 'EVIDENCE', '') !== undefined
+    )
+
+// `no, partially` is a hedge, and read as no it would need no evidence.
+const coverageOf = (line: string | undefined): Coverage | undefined => {
+    const said = labelled(line, 'COVERED')?.replace(/[*_`]/g, '').toLowerCase()
+    const word = /^([a-z]+)[.!]?$/.exec(said ?? '')?.[1]
+    return word !== undefined && isCoverage(word) ? word : undefined
+}
+
+// The answer keeps raw lines: blank lines and indentation belong to a copied code block.
 const parseAnswer = (text: string): Answer | undefined => {
     const lines = text.replaceAll('\r\n', '\n').split('\n')
     const trimmed = lines.map(line => line.trim())
     const coveredAt = trimmed.findIndex(isContent)
     const answerAt = trimmed.findIndex((line, index) => index > coveredAt && isContent(line))
-    // EVIDENCE must be in capitals, so prose in the answer may say Evidence:, and the first one
-    // splits, so no quote moves into the unchecked answer. A reply in title case fails closed.
-    const divider = trimmed.findIndex(
-        (line, index) => index > answerAt && labelled(line, 'EVIDENCE', '') !== undefined
-    )
-    // `**Yes.**` is yes. `no, partially` is a hedge, and read as no it would need no evidence.
-    const said = labelled(trimmed[coveredAt], 'COVERED')?.replace(/[*_`]/g, '').toLowerCase()
-    const covered = /^([a-z]+)[.!]?$/.exec(said ?? '')?.[1]
+    const divider = dividerAt(trimmed, answerAt)
+    const covered = coverageOf(trimmed[coveredAt])
     const first = labelled(trimmed[answerAt], 'ANSWER')
 
-    if (covered === undefined || !isCoverage(covered)) return undefined
-    if (first === undefined || divider === -1) return undefined
+    if (covered === undefined || first === undefined || divider === -1) return undefined
 
     const answer = [first, ...lines.slice(answerAt + 1, divider)].join('\n').trim()
 
