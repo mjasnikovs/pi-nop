@@ -49,29 +49,32 @@ describe('parseAnswer', () => {
         expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
     })
 
-    test('the first EVIDENCE label in any case splits, so no quote escapes the check', () => {
-        expect(parseAnswer('Covered: yes\nAnswer: x\nEvidence: foo\nbar')?.evidence).toEqual([
-            'foo',
-            'bar'
-        ])
+    test('the first EVIDENCE in capitals splits, so prose that says Evidence: stays answer', () => {
+        const source = [{text: 'const a = 1', wholeLines: true}]
+        const reply =
+            'COVERED: yes\nANSWER: x\nEvidence: the docs are thin\nevidence: true\nEVIDENCE:\nconst a = 1'
+        expect(verifyAnswer(reply, source)).toBe(reply)
         expect(
-            parseAnswer('COVERED: yes\nANSWER: a\nEVIDENCE:\nEvidence: quoted')?.evidence
-        ).toEqual(['Evidence: quoted'])
-        const source = [{text: 'config file\nevidence: true\nEVIDENCE: x\nother', wholeLines: true}]
-        for (const reply of [
-            'Covered: yes\nAnswer: it is on\nEvidence:\ninvented line\nevidence: true',
-            'Covered: yes\nAnswer: it is on\nEvidence:\ninvented line\nEVIDENCE: x'
-        ])
-            expect(() => verifyAnswer(reply, source)).toThrow(
-                AnswerErrors.Invented + 'invented line'
-            )
+            parseAnswer('COVERED: yes\nANSWER: a\nEVIDENCE:\nEVIDENCE: quoted')?.evidence
+        ).toEqual(['EVIDENCE: quoted'])
     })
 
-    test('an answer that itself says evidence: fails closed, never open', () => {
-        const reply = 'COVERED: yes\nANSWER: set\nevidence: true\nmore\nEVIDENCE:\nother'
-        expect(() =>
-            verifyAnswer(reply, [{text: 'other\nevidence: true', wholeLines: true}])
-        ).toThrow(AnswerErrors.Invented)
+    test('a reply with no EVIDENCE in capitals is not in the layout, so no quote goes unchecked', () => {
+        for (const reply of [
+            'Covered: yes\nAnswer: x\nEvidence: foo',
+            'Covered: yes\nAnswer: it is on\nEvidence:\ninvented line\nevidence: true'
+        ])
+            expect(() => verifyAnswer(reply, [])).toThrow(AnswerErrors.Layout)
+    })
+
+    test('heading and list markers dress a label too, and a tagged fence is no quote', () => {
+        expect(parseAnswer('## COVERED: yes\n- ANSWER: x\n> EVIDENCE:\ny')).toEqual({
+            covered: 'yes',
+            answer: 'x',
+            evidence: ['y']
+        })
+        const fenced = 'COVERED: yes\nANSWER: x\nEVIDENCE:\n```ts\nconst a = 1\n```'
+        expect(verifyAnswer(fenced, [{text: 'const a = 1', wholeLines: true}])).toBe(fenced)
     })
 
     test('emphasis that starts the content stays when nothing parts it from the colon', () => {

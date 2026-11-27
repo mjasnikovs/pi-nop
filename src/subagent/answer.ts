@@ -51,13 +51,13 @@ const isCoverage = (value: string): value is Coverage =>
     (coverages as readonly string[]).includes(value)
 
 // A markup run after the colon closes a dressed label, as in **COVERED:**, only before a space.
-const labelPattern = (label: string): RegExp =>
-    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, 'i')
+const labelPattern = (label: string, flags: string): RegExp =>
+    new RegExp(`^[*_\`#>\\s-]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, flags)
 
-const labelled = (line: string | undefined, label: string): string | undefined => {
+const labelled = (line: string | undefined, label: string, flags = 'i'): string | undefined => {
     if (line === undefined) return undefined
 
-    const found = labelPattern(label).exec(line)
+    const found = labelPattern(label, flags).exec(line)
     return found === null ? undefined : line.slice(found[0].length).trim()
 }
 
@@ -71,9 +71,10 @@ const parseAnswer = (text: string): Answer | undefined => {
     const trimmed = lines.map(line => line.trim())
     const coveredAt = trimmed.findIndex(isContent)
     const answerAt = trimmed.findIndex((line, index) => index > coveredAt && isContent(line))
-    // The first label splits: a later one would move quotes into the answer, where none is checked.
+    // EVIDENCE must be in capitals, so prose in the answer may say Evidence:, and the first one
+    // splits, so no quote moves into the unchecked answer. A reply in title case fails closed.
     const divider = trimmed.findIndex(
-        (line, index) => index > answerAt && labelled(line, 'EVIDENCE') !== undefined
+        (line, index) => index > answerAt && labelled(line, 'EVIDENCE', '') !== undefined
     )
     // `**Yes.**` is yes; `yesterday` is not a coverage.
     const said = labelled(trimmed[coveredAt], 'COVERED')?.replace(/[*_`]/g, '').toLowerCase()
@@ -87,7 +88,10 @@ const parseAnswer = (text: string): Answer | undefined => {
 
     if (answer === '') return undefined
 
-    const evidence = [labelled(trimmed[divider], 'EVIDENCE') ?? '', ...trimmed.slice(divider + 1)]
+    const evidence = [
+        labelled(trimmed[divider], 'EVIDENCE', '') ?? '',
+        ...trimmed.slice(divider + 1)
+    ]
     return {covered, answer, evidence: evidence.filter(line => line !== '')}
 }
 
@@ -141,9 +145,9 @@ const missingFrom = (evidence: string[], sources: Source[]): string[] => {
     return pending.map(({line}) => line)
 }
 
-// A fence, a lone `}` or an emphasis-only line claims nothing, so it is dropped, not failed.
+// A fence, even ```ts, a lone `}` or an emphasis-only line claims nothing, so it is dropped.
 const substantive = (evidence: string[]): string[] =>
-    evidence.filter(line => /[\p{L}\p{N}]/u.test(normalize(line)))
+    evidence.filter(line => isContent(line.trim()) && /[\p{L}\p{N}]/u.test(normalize(line)))
 
 // The layout is returned as is, so the caller sees the coverage and the evidence too.
 const verifyAnswer = (text: string, sources: Source[]): string => {
