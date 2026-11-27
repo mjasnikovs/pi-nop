@@ -188,6 +188,14 @@ describe('view', () => {
         )
     })
 
+    test('a package with no latest tag still answers for an exact version', async () => {
+        expect(await view({name: 'untagged', spec: '1.0.0'}, cwd)).toEqual({
+            version: '1.0.0',
+            deprecated: undefined,
+            latest: undefined
+        })
+    })
+
     test('a scoped name goes through npm to its scope registry', async () => {
         expect((await view({name: '@acme/sdk', spec: 'latest'}, cwd)).version).toBe('1.0.0')
         expect(scopedHits).toBeGreaterThan(0)

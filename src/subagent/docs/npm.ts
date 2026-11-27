@@ -69,7 +69,7 @@ type Target = {
 type View = {
     version: string
     deprecated?: string
-    latest: string
+    latest?: string
 }
 
 // npm's codes for "no such package or version". Anything else is npm or the network failing.
@@ -99,7 +99,7 @@ const npm = async (
 const viewed = Type.Object({
     version: Type.String(),
     deprecated: Type.Optional(Type.String()),
-    'dist-tags.latest': Type.String()
+    'dist-tags.latest': Type.Optional(Type.String())
 })
 const viewedShape = Type.Union([viewed, Type.Array(viewed)])
 // --json, so a silent npm still prints its error code.
