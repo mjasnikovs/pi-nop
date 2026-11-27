@@ -50,14 +50,20 @@ type Answer = {
 const isCoverage = (value: string): value is Coverage =>
     (coverages as readonly string[]).includes(value)
 
-// Models dress a label as **COVERED:**, `Answer`: or Evidence:. A backtick after the colon is
-// kept unless it closes the label, since an answer may start with code.
+// Models dress a label as **COVERED:**, `Answer`: or Evidence:. Markup after the colon closes
+// the label only when a space or the line end follows it, since content may start with it.
 const labelPattern = (label: string): RegExp =>
-    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_]|\`(?=\\s|$))*`, 'i')
+    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, 'i')
 
 const labelled = (line: string | undefined, label: string): string | undefined => {
     const found = line === undefined ? null : labelPattern(label).exec(line)
     return found === null || line === undefined ? undefined : line.slice(found[0].length).trim()
+}
+
+// An answer line may read `evidence: true`, so the label in capitals or alone wins; else the last.
+const isDivider = (line: string): boolean => {
+    const rest = labelled(line, 'EVIDENCE')
+    return rest !== undefined && (rest === '' || line.includes('EVIDENCE'))
 }
 
 // A reply wrapped whole in a code fence still has its labels inside it.
@@ -70,9 +76,11 @@ const parseAnswer = (text: string): Answer | undefined => {
     const trimmed = lines.map(line => line.trim())
     const coveredAt = trimmed.findIndex(isContent)
     const answerAt = trimmed.findIndex((line, index) => index > coveredAt && isContent(line))
-    const divider = trimmed.findIndex(
+    const strict = trimmed.findIndex((line, index) => index > answerAt && isDivider(line))
+    const loose = trimmed.findLastIndex(
         (line, index) => index > answerAt && labelled(line, 'EVIDENCE') !== undefined
     )
+    const divider = strict === -1 ? loose : strict
     // `Yes.` is yes; `yesterday` is not a coverage.
     const covered = /^[a-z]+/.exec(
         labelled(trimmed[coveredAt], 'COVERED')?.toLowerCase() ?? ''

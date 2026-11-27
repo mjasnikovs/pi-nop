@@ -172,23 +172,34 @@ const saveConfig = (config: NopConfig): void => {
 const valueAt = (value: unknown, keys: string[]): unknown =>
     keys.reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], value)
 
-// The first schema error, said as the key and the value the user wrote.
+// typebox writes a/b and a.b the same in a path, so an unknown key is named from its own error.
 const schemaFault = (value: unknown): string => {
-    const [first] = Value.Errors(configSchema, value)
+    const errors = Value.Errors(configSchema, value)
+    const unknown = errors.find(error => error.keyword === 'additionalProperties')
+    const first = unknown ?? errors[0]
     const keys = first?.instancePath.split('/').slice(1) ?? []
-    const key = keys.join('.')
 
-    if (key === '') return 'not a JSON object'
-    // A strict object rejects an unknown key with a false schema.
-    if (first?.keyword === 'boolean') return `${key} is not a setting`
-    return `${key} is ${JSON.stringify(valueAt(value, keys))}`
+    if (unknown !== undefined) {
+        const [name] = (unknown.params as {additionalProperties: string[]}).additionalProperties
+        return `${[...keys, name].join('.')} is not a setting`
+    }
+
+    if (keys.length === 0) return 'not a JSON object'
+    return `${keys.join('.')} is ${JSON.stringify(valueAt(value, keys))}`
 }
 
 const brokenReason = (): string => {
+    let text: string
     let parsed: unknown
 
     try {
-        parsed = JSON.parse(readFileSync(configPath(), 'utf8'))
+        text = readFileSync(configPath(), 'utf8')
+    } catch (error) {
+        return `not readable (${String((error as NodeJS.ErrnoException).code)})`
+    }
+
+    try {
+        parsed = JSON.parse(text)
     } catch {
         return 'not valid JSON'
     }
@@ -209,9 +220,17 @@ const loadSafely = (ctx?: ExtensionContext): Loaded => {
 
 const safeConfig = (ctx?: ExtensionContext): NopConfig => loadSafely(ctx).config
 
-// The first save over a broken file would lose what the user wrote, so it moves aside first.
-const setAsideBroken = (): string => {
-    const aside = `${configPath()}.broken`
+const freeAside = (taken: number): string => {
+    const aside = `${configPath()}.broken${taken === 0 ? '' : `-${String(taken + 1)}`}`
+    return existsSync(aside) ? freeAside(taken + 1) : aside
+}
+
+// The first save over a broken file would lose what the user wrote, so it moves aside first,
+// never over an earlier copy. A file removed meanwhile has nothing left to keep.
+const setAsideBroken = (): string | undefined => {
+    if (!existsSync(configPath())) return undefined
+
+    const aside = freeAside(0)
     renameSync(configPath(), aside)
     return aside
 }
