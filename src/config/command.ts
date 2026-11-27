@@ -78,8 +78,7 @@ const dropStaleModels = (config: NopConfig, models: string[]): NopConfig =>
             :   applyChange(fixed, modelOf(tool).id, inherit)
     }, config)
 
-// Another editor may have changed the file since the panel opened. Its edits are kept, and a
-// file that is broken now is copied aside before this save replaces it.
+// Another editor may have changed the file since the panel opened.
 const synced = (
     ctx: ExtensionCommandContext,
     config: NopConfig,
@@ -144,8 +143,9 @@ export default function (pi: ExtensionAPI) {
                         getSettingsListTheme(),
                         (id, value) => {
                             try {
-                                config = applyChange(synced(ctx, config, available), id, value)
-                                saveConfig(config)
+                                const next = applyChange(synced(ctx, config, available), id, value)
+                                saveConfig(next)
+                                config = next
                             } catch (failure) {
                                 ctx.ui.notify(
                                     `pi-nop config not saved: ${describe(failure)}`,

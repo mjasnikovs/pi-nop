@@ -67,6 +67,25 @@ describe('parseAnswer', () => {
             expect(() => verifyAnswer(reply, [])).toThrow(AnswerErrors.Layout)
     })
 
+    test('a line that only starts with a fence is a quote and is checked', () => {
+        const source = [{text: 'real line here\nconst a = 1', wholeLines: true}]
+        for (const invented of ['```rm -rf / is safe```', '~~~invented claim~~~'])
+            expect(() =>
+                verifyAnswer(
+                    `COVERED: yes\nANSWER: x\nEVIDENCE:\nreal line here\n${invented}`,
+                    source
+                )
+            ).toThrow(AnswerErrors.Invented)
+        const inline = 'COVERED: yes\nANSWER: x\nEVIDENCE:\n```const a = 1```'
+        expect(verifyAnswer(inline, source)).toBe(inline)
+    })
+
+    test('a hedged coverage is not read as its first word', () => {
+        for (const said of ['no, partially', 'no - actually yes', 'yes, mostly'])
+            expect(parseAnswer(`COVERED: ${said}\nANSWER: x\nEVIDENCE:\ny`)).toBeUndefined()
+        expect(parseAnswer('COVERED: No!\nANSWER: x\nEVIDENCE:\n')?.covered).toBe('no')
+    })
+
     test('heading and list markers dress a label too, and a tagged fence is no quote', () => {
         expect(parseAnswer('## COVERED: yes\n- ANSWER: x\n> EVIDENCE:\ny')).toEqual({
             covered: 'yes',
