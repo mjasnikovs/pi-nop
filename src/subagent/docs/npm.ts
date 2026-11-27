@@ -10,11 +10,6 @@ import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
 import {stop, tar} from './platform'
 
-const ended = (command: string, code: number | null, killedBy: string | null): string =>
-    killedBy === null ?
-        `${command} exited with ${String(code)}`
-    :   `${command} stopped on ${killedBy}`
-
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
     command: string,
@@ -35,7 +30,7 @@ const run = (
         child.on('close', (code, killedBy) => {
             signal?.removeEventListener('abort', abort)
             if (code === 0) return resolve(stdout)
-            reject(new Error(stderr || ended(command, code, killedBy)))
+            reject(new Error(stderr || `${command} ended with ${String(killedBy ?? code)}`))
         })
     })
 
