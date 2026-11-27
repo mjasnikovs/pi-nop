@@ -8,7 +8,7 @@ import spawn from 'cross-spawn'
 import {describe} from '../describe'
 import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
-import {notFound, onPath, stop, tar} from './platform'
+import {missing, onPath, stop, tar} from './platform'
 
 // Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
 const run = (
@@ -17,7 +17,7 @@ const run = (
     cwd?: string,
     signal?: AbortSignal
 ): Promise<string> =>
-    new Promise((resolve, reject) => {
+    new Promise<string>((resolve, reject) => {
         signal?.throwIfAborted()
         const child = spawn(onPath(command), args, {cwd, stdio: ['ignore', 'pipe', 'pipe']})
         const abort = () => stop(child)
@@ -27,15 +27,15 @@ const run = (
         signal?.addEventListener('abort', abort, {once: true})
         child.stdout?.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
         child.stderr?.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
-        child.on('error', (error: NodeJS.ErrnoException) => {
-            settle()
-            reject(error.code === 'ENOENT' ? new Error(notFound(command)) : error)
-        })
+        // A failed spawn still ends in close, so settle there covers it.
+        child.on('error', reject)
         child.on('close', (code, killedBy) => {
             settle()
             if (code === 0) return resolve(stdout)
             reject(new Error(stderr || `${command} ended with ${String(killedBy ?? code)}`))
         })
+    }).catch((error: unknown) => {
+        throw missing(command, error)
     })
 
 enum NpmErrors {
