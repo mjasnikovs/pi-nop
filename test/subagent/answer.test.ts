@@ -60,6 +60,11 @@ describe('parseAnswer', () => {
             ).not.toThrow()
     })
 
+    test('a looped fence line is read in linear time', () => {
+        const looped = Array.from({length: 10}, () => '```ts' + ' a="x"'.repeat(40) + ' !')
+        expect(substantive(looped)).toEqual(looped)
+    })
+
     test('reads a reply in a longer fence, as one that holds a code block needs', () => {
         for (const fence of ['````', '~~~~'])
             expect(

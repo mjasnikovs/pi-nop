@@ -61,8 +61,9 @@ const labelled = (line: string | undefined, label: string, flags = 'i'): string 
     return found === null ? undefined : line.slice(found[0].length).trim()
 }
 
-// A fence tag is one word, as c#, then attributes, as title="a". Other text is a quote.
-const fence = /^(?:`{3,}|~{3,})\s*[^\s`~]*(?:\s+(?:[\w-]+=(?:"[^"]*"|\S+)|\{[^}]*\}))*$/
+// A fence tag is one word, as c#, then attributes, as title="a". Other text is a quote. Each
+// attribute has one parse only, so a looped line cannot backtrack exponentially.
+const fence = /^(?:`{3,}|~{3,})(?:\s*[^\s`~]+)?(?:\s+(?:[\w-]+=(?:"[^"]*"|[^\s"]\S*)|\{[^}]*\}))*$/
 const isContent = (line: string): boolean => line !== '' && !fence.test(line)
 
 // Capitals only, so the answer may say Evidence:. The first splits, so no quote hides above it.
