@@ -13,7 +13,7 @@ const cwd = process.cwd()
 try {
     const ranged = await view({name: 'typescript', spec: '>=5.0.0 <5.1.0'}, cwd)
     assert.match(ranged.version, /^5\.0\./)
-    assert.match((await view({name: 'zod', spec: '^3 || ^4'}, cwd)).version, /^4\./)
+    assert.equal((await view({name: 'zod', spec: '3.22.0 || 3.22.4'}, cwd)).version, '3.22.4')
 
     const zod = await download('zod', {name: 'zod', spec: '^3'}, cwd)
     assert.ok(existsSync(join(zod, 'node_modules', 'zod', 'package.json')))

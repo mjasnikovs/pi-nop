@@ -2,12 +2,8 @@ name: CI
 
 on:
     push:
+        branches: [master]
     pull_request:
-
-# A push and the pull request it updates share one run.
-concurrency:
-    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-    cancel-in-progress: true
 
 jobs:
     test:
