@@ -49,6 +49,13 @@ describe('parseAnswer', () => {
         expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
     })
 
+    test('reads a reply in a longer fence, as one that holds a code block needs', () => {
+        for (const fence of ['````', '~~~~'])
+            expect(
+                parseAnswer(`${fence}md\nCOVERED: yes\nANSWER: x\nEVIDENCE:\ny\n${fence}`)
+            ).toEqual({covered: 'yes', answer: 'x', evidence: ['y', fence]})
+    })
+
     test('the first EVIDENCE in capitals splits, so prose that says Evidence: stays answer', () => {
         const source = [{text: 'const a = 1', wholeLines: true}]
         const reply =

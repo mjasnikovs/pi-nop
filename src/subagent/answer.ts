@@ -62,7 +62,7 @@ const labelled = (line: string | undefined, label: string, flags = 'i'): string 
 }
 
 // A bare fence line, with or without its language, wraps content and is none.
-const isContent = (line: string): boolean => line !== '' && !/^(?:```|~~~)[\w+-]*$/.test(line)
+const isContent = (line: string): boolean => line !== '' && !/^(?:`{3,}|~{3,})[\w+-]*$/.test(line)
 
 // Labels are found on trimmed lines, but the answer keeps its raw lines: blank lines and
 // indentation are part of a copied code block.

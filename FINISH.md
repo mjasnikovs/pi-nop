@@ -24,7 +24,7 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 7 rounds so far. Round 7 fixes are committed.
+Review loop: 8 rounds so far. Round 8 fixes are committed.
 
 ## Next steps
 
@@ -41,7 +41,9 @@ Review loop: 7 rounds so far. Round 7 fixes are committed.
 - **Speculation, not fixed**: a missing ComSpec, `npm pack` non-JSON stdout (probed: always JSON),
   the config re-read race, long string values in the warning, piled `.broken` copies on a
   read-only file, a fence line with a made-up language, closing markup on
-  `**ANSWER: x**`, a fence-only answer, an empty key name, tests run as root.
+  `**ANSWER: x**`, a fence-only answer, an empty key name, tests run as root, the panel hint on
+  an unreadable file, a row reset while the same key changed outside, reordered keys, the
+  tool-call hint outside the tui.
 
 ## Not started (from the annoyance scan, older than this work)
 
