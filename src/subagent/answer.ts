@@ -51,23 +51,14 @@ const isCoverage = (value: string): value is Coverage =>
     (coverages as readonly string[]).includes(value)
 
 // A markup run after the colon closes a dressed label, as in **COVERED:**, only before a space.
-const labelPattern = (label: string, flags: string): RegExp =>
-    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, flags)
+const labelPattern = (label: string): RegExp =>
+    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_\`]+(?=\\s|$))?`, 'i')
 
-const labelled = (line: string | undefined, label: string, flags = 'i'): string | undefined => {
+const labelled = (line: string | undefined, label: string): string | undefined => {
     if (line === undefined) return undefined
 
-    const found = labelPattern(label, flags).exec(line)
+    const found = labelPattern(label).exec(line)
     return found === null ? undefined : line.slice(found[0].length).trim()
-}
-
-// An answer may say evidence, so EVIDENCE in capitals wins; a reply in title case has only
-// Evidence:, and then the last one splits. Either rule misreads only a rare reply, never silently.
-const dividerAfter = (lines: string[], answerAt: number): number => {
-    const after = (flags: string) => (line: string, index: number) =>
-        index > answerAt && labelled(line, 'EVIDENCE', flags) !== undefined
-    const capitals = lines.findIndex(after(''))
-    return capitals === -1 ? lines.findLastIndex(after('i')) : capitals
 }
 
 // A reply wrapped whole in a code fence still has its labels inside it.
@@ -80,7 +71,10 @@ const parseAnswer = (text: string): Answer | undefined => {
     const trimmed = lines.map(line => line.trim())
     const coveredAt = trimmed.findIndex(isContent)
     const answerAt = trimmed.findIndex((line, index) => index > coveredAt && isContent(line))
-    const divider = dividerAfter(trimmed, answerAt)
+    // The first label splits: a later one would move quotes into the answer, where none is checked.
+    const divider = trimmed.findIndex(
+        (line, index) => index > answerAt && labelled(line, 'EVIDENCE') !== undefined
+    )
     // `**Yes.**` is yes; `yesterday` is not a coverage.
     const said = labelled(trimmed[coveredAt], 'COVERED')?.replace(/[*_`]/g, '').toLowerCase()
     const covered = /^[a-z]+/.exec(said ?? '')?.[0]

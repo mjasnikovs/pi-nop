@@ -5,9 +5,18 @@ import type {
     RegisteredCommand
 } from '@earendil-works/pi-coding-agent'
 import type {Component} from '@earendil-works/pi-tui'
-import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
+import {
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync
+} from 'node:fs'
 import {join} from 'node:path'
 import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
+import {tempTree} from '../tree'
 
 const plain = (text: string) => text
 const actual = await import('@earendil-works/pi-coding-agent')
@@ -413,6 +422,23 @@ describe('nop-config command', () => {
         expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('nope')
     })
 
+    test('a broken config that is a symlink stays a link, and its target gets the save', async () => {
+        const target = join(tempTree({'pi-nop.json': 'nope'}), 'pi-nop.json')
+        symlinkSync(target, configPath)
+
+        const {panel} = await openPanel()
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(lstatSync(configPath).isSymbolicLink()).toBe(true)
+        expect(JSON.parse(readFileSync(target, 'utf8'))).toEqual({subagent: {thinkingLevel: 'off'}})
+        expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('nope')
+    })
+
+    test('a file saved with a byte order mark reads as JSON', () => {
+        writeFileSync(configPath, '\uFEFF{"concurrency":1}')
+        expect(loadConfig()).toEqual({concurrency: 1})
+    })
+
     test('a second broken file is kept beside the first, not over it', async () => {
         writeFileSync(`${configPath}.broken`, 'first')
         writeFileSync(configPath, 'second')
@@ -433,6 +459,11 @@ describe('nop-config command', () => {
         panel.handleInput(enter)
         expect(loadConfig()).toEqual({concurrency: 1, subagent: {thinkingLevel: 'off'}})
         expect(existsSync(`${configPath}.broken`)).toBe(false)
+        expect(notify).toHaveBeenLastCalledWith(
+            'pi-nop config changed while the panel was open; this change went into the new one. '
+                + 'Reopen /nop-config to see every value.',
+            'info'
+        )
     })
 
     test('a broken file removed while the panel is open does not stop the save', async () => {

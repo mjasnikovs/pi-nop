@@ -1,4 +1,4 @@
-import {existsSync, mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs'
+import {copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import type {ExtensionContext, ModelRegistry} from '@earendil-works/pi-coding-agent'
 import {getAgentDir} from '@earendil-works/pi-coding-agent'
@@ -158,11 +158,11 @@ const configSchema = fileSchema()
 type NopConfig = Static<typeof configSchema>
 
 const configPath = (): string => join(getAgentDir(), configFile)
+// Notepad and some Windows editors start the file with a byte order mark, which JSON refuses.
+const configText = (): string => readFileSync(configPath(), 'utf8').replace(/^\uFEFF/, '')
 
 const loadConfig = (): NopConfig =>
-    existsSync(configPath()) ?
-        Value.Parse(configSchema, JSON.parse(readFileSync(configPath(), 'utf8')))
-    :   {}
+    existsSync(configPath()) ? Value.Parse(configSchema, JSON.parse(configText())) : {}
 
 const saveConfig = (config: NopConfig): void => {
     mkdirSync(getAgentDir(), {recursive: true})
@@ -172,7 +172,6 @@ const saveConfig = (config: NopConfig): void => {
 const valueAt = (value: unknown, keys: string[]): unknown =>
     keys.reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], value)
 
-// typebox does not escape / in a path, so an unknown key is read from its own error.
 // The panel lists settings as subagent.model, which a user may copy into the file flat.
 const unknownKey = (key: string): string => {
     const [head, tail] = path(key)
@@ -194,6 +193,7 @@ const schemaFault = (value: unknown): string => {
     const keys = first?.instancePath.split('/').slice(1) ?? []
 
     if (unknown !== undefined) {
+        // typebox does not escape / in a path, so the unknown key is read from its own error.
         const [name] = (unknown.params as {additionalProperties: string[]}).additionalProperties
         return unknownKey([...keys, name].join('.'))
     }
@@ -207,7 +207,7 @@ const brokenReason = (): string => {
     let parsed: unknown
 
     try {
-        text = readFileSync(configPath(), 'utf8')
+        text = configText()
     } catch (error) {
         return `not readable (${String((error as NodeJS.ErrnoException).code)})`
     }
@@ -239,10 +239,11 @@ const freeAside = (taken: number): string => {
     return existsSync(aside) ? freeAside(taken + 1) : aside
 }
 
-// A save over a broken file would lose what the user wrote, so it moves aside, past older copies.
+// A save over a broken file would lose what the user wrote, so a copy goes aside, past older
+// ones. A copy, not a move: a symlinked config must stay a link for the save to go through.
 const setAsideBroken = (): string => {
     const aside = freeAside(0)
-    renameSync(configPath(), aside)
+    copyFileSync(configPath(), aside)
     return aside
 }
 
@@ -281,7 +282,6 @@ const findModel = (registry: ModelRegistry, spec?: string): Model<Api> | undefin
 
 export {
     applyChange,
-    brokenConfig,
     concurrency,
     engine,
     engines,
