@@ -133,13 +133,13 @@ describe('view', () => {
 
     // which reads a quoted PATH entry, and an empty PATHEXT entry must not match the bare npm script.
     test.skipIf(process.platform !== 'win32')(
-        'a quoted PATH entry is searched and an extensionless npm is skipped',
+        'a quoted PATH entry is searched, and an extensionless npm or a folder is skipped',
         async () => {
             const shim = tempTree({
                 'npm.cmd': '@node "%~dp0view.js"\r\n',
                 'view.js': `process.stdout.write('{"version":"1.0.0","dist-tags.latest":"1.0.0"}')`
             })
-            const bare = tempTree({npm: '#!/bin/sh\nexit 1\n'})
+            const bare = tempTree({npm: '#!/bin/sh\nexit 1\n', 'npm.cmd/folder': ''})
             const {PATH: path, PATHEXT: extensions} = process.env
             process.env.PATH = `${bare};"${shim}";${path}`
             process.env.PATHEXT = `${extensions};`
