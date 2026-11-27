@@ -1,6 +1,6 @@
 import {spawn} from 'node:child_process'
 import type {ChildProcess} from 'node:child_process'
-import {existsSync} from 'node:fs'
+import {existsSync, realpathSync, statSync} from 'node:fs'
 import {delimiter, isAbsolute, join} from 'node:path'
 
 // pi falls back the same way when SystemRoot is unset.
@@ -31,7 +31,7 @@ const onPath = (name: string, runnable = process.env.PATHEXT ?? '.COM;.EXE;.BAT;
     const extensions = runnable.split(delimiter).filter(extension => extension !== '')
     const found = dirs
         .flatMap(dir => extensions.map(extension => join(dir, name + extension)))
-        .find(file => existsSync(file))
+        .find(file => statSync(file, {throwIfNoEntry: false})?.isFile() === true)
 
     if (found === undefined) throw Object.assign(new Error(notFound(name)), {code: 'ENOENT'})
     return found
@@ -45,6 +45,9 @@ const childEnv = (): NodeJS.ProcessEnv => ({
 
 // cross-spawn runs npm.cmd under cmd.exe, and killing cmd.exe alone leaves npm running.
 const stop = (child: ChildProcess): void => {
+    // An exited child's PID may already belong to another process tree.
+    if (child.exitCode !== null || child.signalCode !== null) return
+
     if (process.platform !== 'win32' || child.pid === undefined) {
         child.kill()
         return
@@ -57,4 +60,13 @@ const stop = (child: ChildProcess): void => {
         .once('exit', code => code === 0 || child.kill())
 }
 
-export {childEnv, missing, onPath, stop, tar}
+// Native, as TypeScript resolves on Windows, falling back where native throws, as TypeScript does.
+const realpath = (path: string): string => {
+    try {
+        return realpathSync.native(path)
+    } catch {
+        return realpathSync(path)
+    }
+}
+
+export {childEnv, missing, onPath, realpath, stop, tar}
