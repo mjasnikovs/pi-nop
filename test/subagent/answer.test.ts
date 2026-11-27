@@ -49,33 +49,29 @@ describe('parseAnswer', () => {
         expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
     })
 
-    test('only EVIDENCE in capitals ends the answer, so an answer may say evidence', () => {
-        const text =
-            'COVERED: yes\nANSWER: config:\nevidence: true\n* Evidence: kept\nEVIDENCE:\nfoo'
-        expect(parseAnswer(text)).toEqual({
-            covered: 'yes',
-            answer: 'config:\nevidence: true\n* Evidence: kept',
-            evidence: ['foo']
-        })
-        const yaml =
-            'COVERED: yes\nANSWER: set it:\n```yaml\nevidence:\n  - a\n```\n**Evidence:**\nEVIDENCE:\nfoo'
-        expect(parseAnswer(yaml)).toEqual({
-            covered: 'yes',
-            answer: 'set it:\n```yaml\nevidence:\n  - a\n```\n**Evidence:**',
-            evidence: ['foo']
-        })
+    test('the first EVIDENCE label in any case splits, so no quote escapes the check', () => {
         expect(parseAnswer('Covered: yes\nAnswer: x\nEvidence: foo\nbar')?.evidence).toEqual([
             'foo',
             'bar'
         ])
-        expect(parseAnswer('Covered: yes\nAnswer: set\nevidence: true\nEvidence:\nfoo')).toEqual({
-            covered: 'yes',
-            answer: 'set\nevidence: true',
-            evidence: ['foo']
-        })
         expect(
             parseAnswer('COVERED: yes\nANSWER: a\nEVIDENCE:\nEvidence: quoted')?.evidence
         ).toEqual(['Evidence: quoted'])
+        const source = [{text: 'config file\nevidence: true\nEVIDENCE: x\nother', wholeLines: true}]
+        for (const reply of [
+            'Covered: yes\nAnswer: it is on\nEvidence:\ninvented line\nevidence: true',
+            'Covered: yes\nAnswer: it is on\nEvidence:\ninvented line\nEVIDENCE: x'
+        ])
+            expect(() => verifyAnswer(reply, source)).toThrow(
+                AnswerErrors.Invented + 'invented line'
+            )
+    })
+
+    test('an answer that itself says evidence: fails closed, never open', () => {
+        const reply = 'COVERED: yes\nANSWER: set\nevidence: true\nmore\nEVIDENCE:\nother'
+        expect(() =>
+            verifyAnswer(reply, [{text: 'other\nevidence: true', wholeLines: true}])
+        ).toThrow(AnswerErrors.Invented)
     })
 
     test('emphasis that starts the content stays when nothing parts it from the colon', () => {

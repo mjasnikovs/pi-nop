@@ -86,7 +86,15 @@ const keepWritten = (
 ): NopConfig => {
     const now = loadSafely()
 
-    if (!now.broken) return dropStaleModels(now.config, available)
+    if (!now.broken) {
+        ctx.ui.notify(
+            'pi-nop config changed while the panel was open; this change went into the new one. '
+                + 'Reopen /nop-config to see every value.',
+            'info'
+        )
+        return dropStaleModels(now.config, available)
+    }
+
     ctx.ui.notify(`Saved the broken pi-nop config as ${setAsideBroken()}`, 'info')
     return config
 }
