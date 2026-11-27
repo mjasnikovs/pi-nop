@@ -23,9 +23,9 @@ const thinkingLevels = [
 const inherit = 'inherit'
 const unlimited = 'unlimited'
 const off = 'off'
-const brokenConfig = (path: string, reason: string): string =>
+const brokenConfig = (path: string, reason: string, fix: string): string =>
     `pi-nop config ${path} is broken: ${reason}. Every pi-nop setting uses its default until it is `
-    + 'fixed. Run /nop-config to fix it.'
+    + `fixed. ${fix}`
 const missingModel = (spec: string): string =>
     `pi-nop model ${spec} is not available, using the host model. Run /nop-config to pick another.`
 
@@ -223,11 +223,11 @@ const brokenReason = (): string => {
 
 type Loaded = {config: NopConfig; broken: boolean}
 
-const loadSafely = (ctx?: ExtensionContext): Loaded => {
+const loadSafely = (ctx?: ExtensionContext, fix = 'Run /nop-config to fix it.'): Loaded => {
     try {
         return {config: loadConfig(), broken: false}
     } catch {
-        ctx?.ui.notify(brokenConfig(configPath(), brokenReason()), 'warning')
+        ctx?.ui.notify(brokenConfig(configPath(), brokenReason(), fix), 'warning')
         return {config: {}, broken: true}
     }
 }
