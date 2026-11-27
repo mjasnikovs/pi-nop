@@ -113,6 +113,16 @@ describe('web-search tool', () => {
         expect(fetchMock.mock.calls[0][0]).toBe('https://mcp.exa.ai/mcp')
     })
 
+    test('an empty engine override counts as unset', async () => {
+        config = {'web-search': {engine: 'ddg'}}
+        process.env[engineOverride] = ''
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(new Response('<html></html>', {headers: {'content-type': 'text/html'}}))
+        )
+        await run()
+        expect(fetchMock.mock.calls[0][0]).toStartWith('https://html.duckduckgo.com/')
+    })
+
     test('the engine override wins over the config', async () => {
         config = {'web-search': {engine: 'exa'}}
         process.env[engineOverride] = 'ddg'

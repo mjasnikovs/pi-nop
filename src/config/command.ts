@@ -4,6 +4,7 @@ import type {SettingItem} from '@earendil-works/pi-tui'
 import {SelectList, SettingsList} from '@earendil-works/pi-tui'
 import {readFileSync} from 'node:fs'
 
+import {describe} from '../subagent/describe'
 import {boxed} from './box'
 import {
     applyChange,
@@ -78,10 +79,14 @@ const dropStaleModels = (config: NopConfig, models: string[]): NopConfig =>
     }, config)
 
 // The file may have been fixed, or removed, since the panel opened; only a still broken one moves.
-const keepWritten = (ctx: ExtensionCommandContext, config: NopConfig): NopConfig => {
+const keepWritten = (
+    ctx: ExtensionCommandContext,
+    config: NopConfig,
+    available: string[]
+): NopConfig => {
     const now = loadSafely()
 
-    if (!now.broken) return now.config
+    if (!now.broken) return dropStaleModels(now.config, available)
     ctx.ui.notify(`Saved the broken pi-nop config as ${setAsideBroken()}`, 'info')
     return config
 }
@@ -128,10 +133,17 @@ export default function (pi: ExtensionAPI) {
                         Math.min(items.length, maxVisible),
                         getSettingsListTheme(),
                         (id, value) => {
-                            if (broken) config = keepWritten(ctx, config)
-                            broken = false
-                            config = applyChange(config, id, value)
-                            saveConfig(config)
+                            try {
+                                if (broken) config = keepWritten(ctx, config, available)
+                                broken = false
+                                config = applyChange(config, id, value)
+                                saveConfig(config)
+                            } catch (failure) {
+                                ctx.ui.notify(
+                                    `pi-nop config not saved: ${describe(failure)}`,
+                                    'error'
+                                )
+                            }
                         },
                         () => done(undefined)
                     )

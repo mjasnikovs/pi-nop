@@ -18,7 +18,8 @@ const listed = `${engineNames.slice(0, -1).join(', ')} and ${String(engineNames.
 const engineName = (ctx: ExtensionContext): EngineName => {
     const override = process.env[engineOverride]
 
-    if (override === undefined) return read(safeConfig(ctx), engine)
+    // `export PI_NOP_SEARCH_ENGINE=` unsets it in effect.
+    if (override === undefined || override === '') return read(safeConfig(ctx), engine)
     if (Value.Check(engine.schema, override)) return override
     throw new Error(
         `${SearchErrors.Failed}${engineOverride} is "${override}", and the engines are ${listed}`
