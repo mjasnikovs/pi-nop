@@ -95,61 +95,64 @@ const withFakePdftotext = async (script: string, run: () => unknown): Promise<vo
         process.env.PATH = path
     }
 }
-test('names an old pdftotext that has no -remove-hyphens', () =>
-    withFakePdftotext('echo "Usage: pdftotext [options]" >&2\nexit 99', () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            'Fetch failed: pdftotext is too old, it needs the -remove-hyphens option of a newer poppler'
-        )
-    ))
+// The fake is a /bin/sh script, which Windows cannot run.
+describe.skipIf(process.platform === 'win32')('a fake pdftotext', () => {
+    test('names an old pdftotext that has no -remove-hyphens', () =>
+        withFakePdftotext('echo "Usage: pdftotext [options]" >&2\nexit 99', () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                'Fetch failed: pdftotext is too old, it needs the -remove-hyphens option of a newer poppler'
+            )
+        ))
 
-test('reports any other exit 99 by what pdftotext said', () =>
-    withFakePdftotext('echo "Internal Error: out of memory" >&2\nexit 99', () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            'Fetch failed: Internal Error: out of memory'
-        )
-    ))
+    test('reports any other exit 99 by what pdftotext said', () =>
+        withFakePdftotext('echo "Internal Error: out of memory" >&2\nexit 99', () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                'Fetch failed: Internal Error: out of memory'
+            )
+        ))
 
-test('asks for unix line ends, which the split patterns read', () =>
-    withFakePdftotext('echo "$@" >&2\nexit 1', () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow('-eol unix')
-    ))
+    test('asks for unix line ends, which the split patterns read', () =>
+        withFakePdftotext('echo "$@" >&2\nexit 1', () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow('-eol unix')
+        ))
 
-test('reads usage text only where a line starts with it', () =>
-    withFakePdftotext(`echo "Syntax Error: Unknown font tag 'Usage:'" >&2\nexit 1`, () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            new Error("Fetch failed: Syntax Error: Unknown font tag 'Usage:'")
-        )
-    ))
+    test('reads usage text only where a line starts with it', () =>
+        withFakePdftotext(`echo "Syntax Error: Unknown font tag 'Usage:'" >&2\nexit 1`, () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                new Error("Fetch failed: Syntax Error: Unknown font tag 'Usage:'")
+            )
+        ))
 
-test('reports a last line with no line end', () =>
-    withFakePdftotext(`printf 'Internal Error: x' >&2\nexit 1`, () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            new Error('Fetch failed: Internal Error: x')
-        )
-    ))
+    test('reports a last line with no line end', () =>
+        withFakePdftotext(`printf 'Internal Error: x' >&2\nexit 1`, () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                new Error('Fetch failed: Internal Error: x')
+            )
+        ))
 
-test('reports a crash by its signal, not the warning before it', () =>
-    withFakePdftotext('echo "Syntax Warning: bad font" >&2\nkill -SEGV $$', () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            new Error('Fetch failed: pdftotext stopped on SIGSEGV')
-        )
-    ))
+    test('reports a crash by its signal, not the warning before it', () =>
+        withFakePdftotext('echo "Syntax Warning: bad font" >&2\nkill -SEGV $$', () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                new Error('Fetch failed: pdftotext stopped on SIGSEGV')
+            )
+        ))
 
-test('reports a silent failure by its exit code', () =>
-    withFakePdftotext('exit 3', () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            new Error('Fetch failed: pdftotext exited with 3')
-        )
-    ))
+    test('reports a silent failure by its exit code', () =>
+        withFakePdftotext('exit 3', () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                new Error('Fetch failed: pdftotext exited with 3')
+            )
+        ))
 
-// Longer than a pipe read, so the reason arrives in pieces.
-test('reports a reason line that arrives in pieces', () => {
-    const reason = 'x'.repeat(200_000)
-    return withFakePdftotext(`echo ${reason} >&2\nexit 1`, () =>
-        expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
-            new Error(FetchErrors.Failed + reason)
+    // Longer than a pipe read, so the reason arrives in pieces.
+    test('reports a reason line that arrives in pieces', () => {
+        const reason = 'x'.repeat(200_000)
+        return withFakePdftotext(`echo ${reason} >&2\nexit 1`, () =>
+            expect(pdfText(new Uint8Array([0x25]), limit)).rejects.toThrow(
+                new Error(FetchErrors.Failed + reason)
+            )
         )
-    )
+    })
 })
 
 describe('quotable', () => {

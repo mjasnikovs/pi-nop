@@ -1,4 +1,5 @@
 import {afterAll, beforeEach, describe, expect, mock, test} from 'bun:test'
+import {join} from 'node:path'
 import type {
     ExtensionAPI,
     ExtensionContext,
@@ -94,7 +95,7 @@ describe('docs tool', () => {
         options.model = window(500)
         const cwd = project('workspace:*', {'node_modules/lib/README.md': readme})
         const {task, used} = await ask(cwd)
-        expect(task).toContain(`<file>${cwd}/node_modules/lib/README.md</file>`)
+        expect(task).toContain(`<file>${join(cwd, 'node_modules', 'lib', 'README.md')}</file>`)
         expect(task).not.toContain(readme)
         expect(used).toMatchObject({tools: ['read']})
         expect(used.prompt).toContain('Read and grep the files listed')

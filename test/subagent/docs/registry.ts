@@ -2,6 +2,7 @@ import {execFileSync} from 'node:child_process'
 import {readFileSync} from 'node:fs'
 import {join} from 'node:path'
 
+import {tar} from '../../../src/subagent/docs/tar'
 import {tempTree} from '../../tree'
 import type {Files} from '../../tree'
 
@@ -24,7 +25,7 @@ const tarball = (files: Files): Uint8Array => {
     const root = tempTree(
         Object.fromEntries(Object.entries(files).map(([path, text]) => [`package/${path}`, text]))
     )
-    execFileSync('tar', ['-czf', 'pkg.tgz', 'package'], {cwd: root})
+    execFileSync(tar, ['-czf', 'pkg.tgz', 'package'], {cwd: root})
     return readFileSync(join(root, 'pkg.tgz'))
 }
 

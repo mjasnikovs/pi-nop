@@ -39,15 +39,16 @@
         "LICENSE"
     ],
     "scripts": {
-        "test": "bun test",
-        "lint": "prettier --log-level warn --write '{src,test,eval}/**/*.ts' && eslint --fix . && tsc --noEmit",
-        "lint:check": "prettier --check '{src,test,eval}/**/*.ts' && eslint . --max-warnings 0 && tsc --noEmit",
+        "test": "bun test --isolate",
+        "lint": "prettier --log-level warn --write \"{src,test,eval}/**/*.ts\" && eslint --fix . && tsc --noEmit",
+        "lint:check": "prettier --check \"{src,test,eval}/**/*.ts\" && eslint . --max-warnings 0 && tsc --noEmit",
         "eval": "bun eval/fetch.eval.ts",
         "eval:search": "bun eval/search.eval.ts",
         "eval:docs": "bun eval/docs.eval.ts"
     },
     "dependencies": {
         "@mozilla/readability": "0.6.0",
+        "cross-spawn": "7.0.6",
         "linkedom": "0.18.13",
         "turndown": "7.2.4",
         "turndown-plugin-gfm": "1.0.2",
@@ -61,6 +62,7 @@
         "@eslint/js": "10.0.1",
         "@stylistic/eslint-plugin": "5.10.0",
         "@types/bun": "1.4.2",
+        "@types/cross-spawn": "6.0.6",
         "@types/turndown": "5.0.6",
         "eslint": "10.11.0",
         "eslint-config-prettier": "10.1.8",

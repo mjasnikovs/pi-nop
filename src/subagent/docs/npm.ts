@@ -1,16 +1,34 @@
-import {execFile} from 'node:child_process'
 import {existsSync, mkdirSync, mkdtempSync, renameSync, rmSync} from 'node:fs'
 import {join} from 'node:path'
-import {promisify} from 'node:util'
 import {getAgentDir} from '@earendil-works/pi-coding-agent'
 import {Type} from 'typebox'
 import Value from 'typebox/value'
+import spawn from 'cross-spawn'
 
 import {describe} from '../describe'
 import {unlessAborted} from '../subagent'
 import {readManifest} from './manifest'
+import {tar} from './tar'
 
-const run = promisify(execFile)
+// Not execFile: it cannot start Windows' npm.cmd. cross-spawn escapes each argument for cmd.exe.
+const run = (
+    command: string,
+    args: string[],
+    cwd?: string,
+    signal?: AbortSignal
+): Promise<string> =>
+    new Promise((resolve, reject) => {
+        const child = spawn(command, args, {cwd, signal, stdio: ['ignore', 'pipe', 'pipe']})
+        let stdout = ''
+        let stderr = ''
+        child.stdout?.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
+        child.stderr?.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
+        child.on('error', reject)
+        child.on('close', code => {
+            if (code === 0) return resolve(stdout)
+            reject(new Error(stderr || `${command} exited with ${code}`))
+        })
+    })
 
 enum NpmErrors {
     Missing = 'not on npm: ',
@@ -51,14 +69,12 @@ const npm = async (
     cwd: string,
     signal?: AbortSignal
 ): Promise<string> =>
-    run('npm', args, {cwd, signal})
-        .then(({stdout}) => stdout)
-        .catch((error: unknown) => {
-            unlessAborted(signal, error)
-            const code = npmCode(error)
-            const lead = missingCodes.includes(code) ? NpmErrors.Missing : NpmErrors.Failed
-            throw new Error(`${lead}${target.name}@${target.spec} (${code})`, {cause: error})
-        })
+    run('npm', args, cwd, signal).catch((error: unknown) => {
+        unlessAborted(signal, error)
+        const code = npmCode(error)
+        const lead = missingCodes.includes(code) ? NpmErrors.Missing : NpmErrors.Failed
+        throw new Error(`${lead}${target.name}@${target.spec} (${code})`, {cause: error})
+    })
 
 const viewed = Type.Object({
     version: Type.String(),
@@ -152,7 +168,7 @@ const unpack = async (
     const tarball = join(scratch, stdout.trim().split('\n').at(-1) ?? '')
     const dir = join(scratch, 'tree', 'node_modules', asked)
     mkdirSync(dir, {recursive: true})
-    await run('tar', ['-xzf', tarball, '-C', dir, '--strip-components=1'], {signal}).catch(
+    await run(tar, ['-xzf', tarball, '-C', dir, '--strip-components=1'], undefined, signal).catch(
         (error: unknown) => {
             unlessAborted(signal, error)
             throw error

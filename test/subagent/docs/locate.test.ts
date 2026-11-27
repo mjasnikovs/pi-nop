@@ -43,7 +43,9 @@ describe('assertPackage', () => {
             './src/config',
             '--registry=x',
             'hono/../other',
-            'hono/./x'
+            'hono/./x',
+            'foo\\..\\..\\x',
+            '@scope\\..\\x/y'
         ])
             expect(() => assertPackage(module)).toThrow(LocateErrors.BadName)
     })

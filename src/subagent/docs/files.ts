@@ -1,5 +1,5 @@
 import {readdirSync, readFileSync} from 'node:fs'
-import {join, relative} from 'node:path'
+import {join, relative, sep} from 'node:path'
 
 import type {TextSource} from '../answer'
 import {packages} from './locate'
@@ -76,7 +76,8 @@ const readAll = (pkg: Package, paths: string[]): CorpusFile[] => {
 // What the model is handed, and what its quotes are checked against.
 const corpusOf = (located: Located): Corpus => {
     const entry = located.entry
-    const entryPath = entry === undefined ? undefined : relative(located.pkg.dir, entry)
+    const entryPath =
+        entry === undefined ? undefined : relative(located.pkg.dir, entry).split(sep).join('/')
     const keepFolder = entryPath === undefined ? undefined : majorFolder(entryPath)
     const files = packages(located).flatMap(pkg => readAll(pkg, packageFiles(pkg, keepFolder)))
     const declared = files.some(file => isDeclaration(file.label))
