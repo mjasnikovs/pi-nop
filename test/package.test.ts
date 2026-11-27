@@ -1,5 +1,5 @@
 import {describe, expect, test} from 'bun:test'
-import {readdirSync, readFileSync} from 'node:fs'
+import {existsSync, readdirSync, readFileSync} from 'node:fs'
 import {isBuiltin} from 'node:module'
 import {join} from 'node:path'
 
@@ -39,10 +39,19 @@ const runtimePackages = [
     )
 ]
 describe('package.json', () => {
+    const shipped = (path: string): boolean =>
+        manifest.files.some(entry => path.replace(/^\.\//, '').startsWith(`${entry}/`))
     test('ships every extension entry pi loads', () => {
-        const shipped = (path: string): boolean =>
-            manifest.files.some(entry => path.replace(/^\.\//, '').startsWith(`${entry}/`))
         expect(manifest.pi.extensions.filter(path => !shipped(path))).toEqual([])
+    })
+
+    // pdf.js reads these at run time; without them CJK text in a font the PDF lacks comes back empty.
+    test('ships the PDF CMaps and their license', () => {
+        const cmaps = [
+            'src/subagent/fetch/cmaps/LICENSE',
+            'src/subagent/fetch/cmaps/90ms-RKSJ-H.bcmap'
+        ]
+        expect(cmaps.filter(path => !shipped(path) || !existsSync(join(root, path)))).toEqual([])
     })
 
     test('host packages are "*" peers, not dependencies', () => {

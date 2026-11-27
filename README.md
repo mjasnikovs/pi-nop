@@ -30,8 +30,7 @@ pi install npm:@mjasnikovs/pi-nop
 ```
 
 Needs pi 1.6.0 or later. `subagent-docs` needs `npm` on PATH, and `tar` too outside Windows.
-Windows 10 1803 and Server 2019 or later ship the `tar.exe` it uses. `subagent-fetch` needs
-`pdftotext` from poppler 26.05.0 or later on PATH for PDF pages.
+Windows 10 1803 and Server 2019 or later ship the `tar.exe` it uses.
 
 ## Tools
 
