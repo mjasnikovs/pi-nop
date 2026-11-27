@@ -50,21 +50,34 @@ type Answer = {
 const isCoverage = (value: string): value is Coverage =>
     (coverages as readonly string[]).includes(value)
 
-const labelled = (line: string | undefined, label: string): string | undefined =>
-    line?.startsWith(label) ? line.slice(label.length).trim() : undefined
+// Models dress a label as **COVERED:**, `Answer`: or Evidence:. A backtick after the colon is
+// kept unless it closes the label, since an answer may start with code.
+const labelPattern = (label: string): RegExp =>
+    new RegExp(`^[*_\`\\s]*${label}[*_\`\\s]*:(?:[*_]|\`(?=\\s|$))*`, 'i')
+
+const labelled = (line: string | undefined, label: string): string | undefined => {
+    const found = line === undefined ? null : labelPattern(label).exec(line)
+    return found === null || line === undefined ? undefined : line.slice(found[0].length).trim()
+}
+
+// A reply wrapped whole in a code fence still has its labels inside it.
+const isContent = (line: string): boolean => line !== '' && !/^(?:```|~~~)/.test(line)
 
 // Labels are found on trimmed lines, but the answer keeps its raw lines: blank lines and
 // indentation are part of a copied code block.
 const parseAnswer = (text: string): Answer | undefined => {
     const lines = text.replaceAll('\r\n', '\n').split('\n')
     const trimmed = lines.map(line => line.trim())
-    const coveredAt = trimmed.findIndex(line => line !== '')
-    const answerAt = trimmed.findIndex((line, index) => index > coveredAt && line !== '')
+    const coveredAt = trimmed.findIndex(isContent)
+    const answerAt = trimmed.findIndex((line, index) => index > coveredAt && isContent(line))
     const divider = trimmed.findIndex(
-        (line, index) => index > answerAt && line.startsWith('EVIDENCE:')
+        (line, index) => index > answerAt && labelled(line, 'EVIDENCE') !== undefined
     )
-    const covered = labelled(trimmed[coveredAt], 'COVERED:')?.toLowerCase()
-    const first = labelled(trimmed[answerAt], 'ANSWER:')
+    // `Yes.` is yes; `yesterday` is not a coverage.
+    const covered = /^[a-z]+/.exec(
+        labelled(trimmed[coveredAt], 'COVERED')?.toLowerCase() ?? ''
+    )?.[0]
+    const first = labelled(trimmed[answerAt], 'ANSWER')
 
     if (covered === undefined || !isCoverage(covered)) return undefined
     if (first === undefined || divider === -1) return undefined
@@ -73,7 +86,7 @@ const parseAnswer = (text: string): Answer | undefined => {
 
     if (answer === '') return undefined
 
-    const evidence = [labelled(trimmed[divider], 'EVIDENCE:') ?? '', ...trimmed.slice(divider + 1)]
+    const evidence = [labelled(trimmed[divider], 'EVIDENCE') ?? '', ...trimmed.slice(divider + 1)]
     return {covered, answer, evidence: evidence.filter(line => line !== '')}
 }
 

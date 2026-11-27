@@ -30,6 +30,29 @@ describe('parseAnswer', () => {
         })
     })
 
+    test('reads labels dressed in emphasis, backticks or another case', () => {
+        const dressed = '**COVERED:** Yes.\n**Answer**: use `pad()`\n`EVIDENCE:`\nexport const pad'
+        expect(parseAnswer(dressed)).toEqual({
+            covered: 'yes',
+            answer: 'use `pad()`',
+            evidence: ['export const pad']
+        })
+        expect(parseAnswer('Covered: partial\nanswer: x\nEvidence: y')?.covered).toBe('partial')
+        expect(parseAnswer('COVERED: yes\nANSWER:`pad()` pads\nEVIDENCE:\ny')?.answer).toBe(
+            '`pad()` pads'
+        )
+    })
+
+    test('reads a reply wrapped whole in a code fence', () => {
+        const text = '```text\nCOVERED: yes\nANSWER: x\nEVIDENCE:\ny\n```'
+        expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
+    })
+
+    test('a coverage word that only starts like one is not read as it', () => {
+        expect(parseAnswer('COVERED: yesterday\nANSWER: x\nEVIDENCE:\ny')).toBeUndefined()
+        expect(parseAnswer('COVERAGE: yes\nANSWER: x\nEVIDENCE:\ny')).toBeUndefined()
+    })
+
     test('accepts no evidence and mixed case coverage', () => {
         expect(parseAnswer('COVERED: No\nANSWER: Not here.\nEVIDENCE:\n')).toEqual({
             covered: 'no',
@@ -76,8 +99,10 @@ describe('parseAnswer', () => {
         expect(parseAnswer('COVERED: yes\nANSWER: The port is')).toBeUndefined()
     })
 
-    test('rejects a fenced reply', () => {
-        expect(parseAnswer('```\nCOVERED: yes\nANSWER: x\nEVIDENCE:\n```')).toBeUndefined()
+    test('a fenced reply is read, and its closing fence is no evidence', () => {
+        expect(() => verifyAnswer('```\nCOVERED: yes\nANSWER: x\nEVIDENCE:\n```', [])).toThrow(
+            AnswerErrors.NoEvidence
+        )
     })
 })
 

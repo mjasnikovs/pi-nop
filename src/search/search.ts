@@ -1,17 +1,29 @@
-import type {ExtensionAPI} from '@earendil-works/pi-coding-agent'
+import type {ExtensionAPI, ExtensionContext} from '@earendil-works/pi-coding-agent'
 import {Type} from 'typebox'
 import Value from 'typebox/value'
 
-import {engine, read, safeConfig, searchTool} from '../config/config'
+import {engine, engines as engineNames, read, safeConfig, searchTool} from '../config/config'
 import type {EngineName} from '../config/config'
 import {brave} from './brave'
 import {ddg} from './ddg'
 import {exa} from './exa'
 import type {Engine, SearchResult} from './engines'
-import {httpOnly} from './engines'
+import {httpOnly, SearchErrors} from './engines'
 
 const engineOverride = 'PI_NOP_SEARCH_ENGINE'
 const engines: Record<EngineName, Engine> = {exa, brave, ddg}
+const listed = `${engineNames.slice(0, -1).join(', ')} and ${String(engineNames.at(-1))}`
+
+// The config was checked as it loaded, so only the environment can name an unknown engine.
+const engineName = (ctx: ExtensionContext): EngineName => {
+    const override = process.env[engineOverride]
+
+    if (override === undefined) return read(safeConfig(ctx), engine)
+    if (Value.Check(engine.schema, override)) return override
+    throw new Error(
+        `${SearchErrors.Failed}${engineOverride} is "${override}", and the engines are ${listed}`
+    )
+}
 
 const formatResult = (result: SearchResult, index: number): string => {
     const lead = `${index + 1}. [${result.title}](${result.url})`
@@ -42,10 +54,7 @@ export default function (pi: ExtensionAPI) {
             })
         }),
         async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-            const name = Value.Parse(
-                engine.schema,
-                process.env[engineOverride] ?? read(safeConfig(ctx), engine)
-            )
+            const name = engineName(ctx)
             const results = httpOnly(await engines[name](params.query, signal))
             return {
                 content: [{type: 'text', text: formatResults(params.query, results)}],

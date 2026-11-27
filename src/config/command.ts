@@ -11,7 +11,8 @@ import {
     modelOf,
     modelSpec,
     read,
-    safeConfig,
+    loadSafely,
+    setAsideBroken,
     saveConfig,
     settings,
     tools
@@ -76,6 +77,8 @@ const dropStaleModels = (config: NopConfig, models: string[]): NopConfig =>
             :   applyChange(fixed, modelOf(tool).id, inherit)
     }, config)
 
+const setAside = (): string => `Saved the broken pi-nop config as ${setAsideBroken()}`
+
 const availableModels = (ctx: ExtensionCommandContext): string[] =>
     ctx.modelRegistry.getAvailable().map(modelSpec)
 
@@ -94,7 +97,9 @@ export default function (pi: ExtensionAPI) {
         handler: async (_args, ctx) => {
             const available = availableModels(ctx)
             const models = offeredModels(ctx, available)
-            let config = dropStaleModels(safeConfig(ctx), available)
+            const loaded = loadSafely(ctx)
+            let config = dropStaleModels(loaded.config, available)
+            let broken = loaded.broken
 
             if (ctx.mode !== 'tui') {
                 ctx.ui.notify(
@@ -116,6 +121,8 @@ export default function (pi: ExtensionAPI) {
                         Math.min(items.length, maxVisible),
                         getSettingsListTheme(),
                         (id, value) => {
+                            if (broken) ctx.ui.notify(setAside(), 'info')
+                            broken = false
                             config = applyChange(config, id, value)
                             saveConfig(config)
                         },

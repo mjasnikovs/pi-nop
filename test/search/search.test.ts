@@ -125,7 +125,11 @@ describe('web-search tool', () => {
 
     test('rejects an unknown engine override before searching', async () => {
         process.env[engineOverride] = 'bing'
-        await expect(run()).rejects.toThrow()
+        await expect(run()).rejects.toThrow(
+            new Error(
+                'Search failed: PI_NOP_SEARCH_ENGINE is "bing", and the engines are exa, brave and ddg'
+            )
+        )
         expect(fetchMock).not.toHaveBeenCalled()
     })
 

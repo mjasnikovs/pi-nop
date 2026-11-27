@@ -306,7 +306,7 @@ describe('fetch tool', () => {
             )
         )
         runSubagent.mockImplementationOnce(() =>
-            Promise.resolve({text: '```\nCOVERED: yes\nANSWER: moved\nEVIDENCE:\n```', details})
+            Promise.resolve({text: 'The page says it moved to /v2.', details})
         )
 
         await expect(tool().execute('id', params, undefined, onUpdate, ctx)).rejects.toThrow(

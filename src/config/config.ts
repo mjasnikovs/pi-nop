@@ -1,4 +1,4 @@
-import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import type {ExtensionContext, ModelRegistry} from '@earendil-works/pi-coding-agent'
 import {getAgentDir} from '@earendil-works/pi-coding-agent'
@@ -23,8 +23,9 @@ const thinkingLevels = [
 const inherit = 'inherit'
 const unlimited = 'unlimited'
 const off = 'off'
-const brokenConfig =
-    'pi-nop config is broken, using the host model and thinking level. Run /nop-config to fix it.'
+const brokenConfig = (path: string, reason: string): string =>
+    `pi-nop config ${path} is broken: ${reason}. Every pi-nop setting uses its default until it is `
+    + 'fixed. Run /nop-config to fix it.'
 const missingModel = (spec: string): string =>
     `pi-nop model ${spec} is not available, using the host model. Run /nop-config to pick another.`
 
@@ -168,13 +169,51 @@ const saveConfig = (config: NopConfig): void => {
     writeFileSync(configPath(), JSON.stringify(config, null, 2) + '\n')
 }
 
-const safeConfig = (ctx?: ExtensionContext): NopConfig => {
+const valueAt = (value: unknown, keys: string[]): unknown =>
+    keys.reduce<unknown>((node, key) => (node as Record<string, unknown> | undefined)?.[key], value)
+
+// The first schema error, said as the key and the value the user wrote.
+const schemaFault = (value: unknown): string => {
+    const [first] = Value.Errors(configSchema, value)
+    const keys = first?.instancePath.split('/').slice(1) ?? []
+    const key = keys.join('.')
+
+    if (key === '') return 'not a JSON object'
+    // A strict object rejects an unknown key with a false schema.
+    if (first?.keyword === 'boolean') return `${key} is not a setting`
+    return `${key} is ${JSON.stringify(valueAt(value, keys))}`
+}
+
+const brokenReason = (): string => {
+    let parsed: unknown
+
     try {
-        return loadConfig()
+        parsed = JSON.parse(readFileSync(configPath(), 'utf8'))
     } catch {
-        ctx?.ui.notify(brokenConfig, 'warning')
-        return {}
+        return 'not valid JSON'
     }
+
+    return schemaFault(parsed)
+}
+
+type Loaded = {config: NopConfig; broken: boolean}
+
+const loadSafely = (ctx?: ExtensionContext): Loaded => {
+    try {
+        return {config: loadConfig(), broken: false}
+    } catch {
+        ctx?.ui.notify(brokenConfig(configPath(), brokenReason()), 'warning')
+        return {config: {}, broken: true}
+    }
+}
+
+const safeConfig = (ctx?: ExtensionContext): NopConfig => loadSafely(ctx).config
+
+// The first save over a broken file would lose what the user wrote, so it moves aside first.
+const setAsideBroken = (): string => {
+    const aside = `${configPath()}.broken`
+    renameSync(configPath(), aside)
+    return aside
 }
 
 const stored = (config: NopConfig, id: string): unknown =>
@@ -219,6 +258,7 @@ export {
     findModel,
     inherit,
     loadConfig,
+    loadSafely,
     missingModel,
     modelOf,
     modelSpec,
@@ -226,6 +266,7 @@ export {
     read,
     restarts,
     safeConfig,
+    setAsideBroken,
     saveConfig,
     searchTool,
     settings,
