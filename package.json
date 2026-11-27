@@ -1,6 +1,6 @@
 {
     "name": "@mjasnikovs/pi-nop",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Read-only subagents for pi: repo search, web fetch, npm package docs, web search, and a /plan panel.",
     "keywords": [
         "pi-package",
@@ -36,8 +36,7 @@
     "files": [
         "src",
         "README.md",
-        "LICENSE",
-        "assets"
+        "LICENSE"
     ],
     "scripts": {
         "test": "bun test",
