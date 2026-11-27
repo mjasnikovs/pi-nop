@@ -24,7 +24,7 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 10 rounds so far. Round 10 fixes are committed.
+Review loop: 11 rounds so far. Round 11 fixes are committed.
 
 ## Next steps
 
@@ -46,6 +46,10 @@ Review loop: 10 rounds so far. Round 10 fixes are committed.
   tool-call hint outside the tui, a dressed `- EVIDENCE:` inside the answer (settled rule), a
   reply written all as a blockquote, a ```madeUpName fence tag (one word, no claim), panel
   messages when a broken or changed file also cannot be written.
+- **Fence attributes**: a claim hidden in `{...}` or `key="..."` after a fence is not checked.
+  The answer text is never checked either, so it gains nothing. Speculation.
+- Also speculation: `# EVIDENCE:` inside a code block in the answer (settled rule), a stray
+  closing fence when only COVERED/ANSWER are fenced.
 
 ## Not started (from the annoyance scan, older than this work)
 
