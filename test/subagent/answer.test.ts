@@ -48,6 +48,28 @@ describe('parseAnswer', () => {
         expect(verifyAnswer(text, [{text: 'y', wholeLines: false}])).toBe(text)
     })
 
+    test('an answer line that only mentions evidence does not end the answer', () => {
+        const text =
+            'COVERED: yes\nANSWER: config:\nevidence: true\n* Evidence: kept\nEVIDENCE:\nfoo'
+        expect(parseAnswer(text)).toEqual({
+            covered: 'yes',
+            answer: 'config:\nevidence: true\n* Evidence: kept',
+            evidence: ['foo']
+        })
+        expect(
+            parseAnswer('COVERED: yes\nANSWER: a\nEVIDENCE:\nEvidence: quoted')?.evidence
+        ).toEqual(['Evidence: quoted'])
+    })
+
+    test('emphasis that starts the content stays when nothing parts it from the colon', () => {
+        expect(parseAnswer('COVERED: yes\nANSWER:**bold** x\nEVIDENCE:\ny')?.answer).toBe(
+            '**bold** x'
+        )
+        expect(parseAnswer('COVERED: yes\nANSWER: x\nEVIDENCE:__init__.py\n')?.evidence).toEqual([
+            '__init__.py'
+        ])
+    })
+
     test('a coverage word that only starts like one is not read as it', () => {
         expect(parseAnswer('COVERED: yesterday\nANSWER: x\nEVIDENCE:\ny')).toBeUndefined()
         expect(parseAnswer('COVERAGE: yes\nANSWER: x\nEVIDENCE:\ny')).toBeUndefined()

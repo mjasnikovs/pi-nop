@@ -5,7 +5,7 @@ import type {
     RegisteredCommand
 } from '@earendil-works/pi-coding-agent'
 import type {Component} from '@earendil-works/pi-tui'
-import {existsSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {agentDir, getAgentDir, useAgentDir} from '../agentDir'
 
@@ -86,8 +86,8 @@ const openPanel = async (ctx = makeCtx()) => {
 useAgentDir()
 
 beforeEach(() => {
-    rmSync(configPath, {force: true})
-    rmSync(`${configPath}.broken`, {force: true})
+    for (const path of [configPath, `${configPath}.broken`, `${configPath}.broken-2`])
+        rmSync(path, {force: true, recursive: true})
     notify.mockClear()
     custom.mockClear()
     getAvailable.mockClear()
@@ -413,6 +413,34 @@ describe('nop-config command', () => {
         expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('nope')
     })
 
+    test('a second broken file is kept beside the first, not over it', async () => {
+        writeFileSync(`${configPath}.broken`, 'first')
+        writeFileSync(configPath, 'second')
+
+        const {panel} = await openPanel()
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(readFileSync(`${configPath}.broken`, 'utf8')).toBe('first')
+        expect(readFileSync(`${configPath}.broken-2`, 'utf8')).toBe('second')
+    })
+
+    test('a broken file removed while the panel is open does not stop the save', async () => {
+        writeFileSync(configPath, 'nope')
+
+        const {panel} = await openPanel()
+        rmSync(configPath)
+        panel.handleInput(down)
+        panel.handleInput(enter)
+        expect(loadConfig()).toEqual({subagent: {thinkingLevel: 'off'}})
+    })
+
+    test('a file that cannot be read is not called bad JSON', async () => {
+        mkdirSync(configPath)
+
+        await registered().handler('', makeCtx('rpc'))
+        expect(notify.mock.calls[0]?.[0]).toContain('is broken: not readable (EISDIR).')
+    })
+
     test('the warning names the bad key and its value, or a key that is not a setting', async () => {
         writeFileSync(configPath, '{"subagent":{"thinkingLevel":"inherit"}}')
         await registered().handler('', makeCtx('rpc'))
@@ -424,6 +452,11 @@ describe('nop-config command', () => {
         writeFileSync(configPath, '{"subagnt":{}}')
         await registered().handler('', makeCtx('rpc'))
         expect(notify.mock.calls[0]?.[0]).toContain('is broken: subagnt is not a setting.')
+
+        notify.mockClear()
+        writeFileSync(configPath, '{"a/b":1}')
+        await registered().handler('', makeCtx('rpc'))
+        expect(notify.mock.calls[0]?.[0]).toContain('is broken: a/b is not a setting.')
     })
 
     test('shows a stale model as inherit and drops it on the next save', async () => {
