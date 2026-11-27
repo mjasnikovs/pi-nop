@@ -24,7 +24,7 @@ These four annoyances are fixed, with tests that failed first and mutation check
 4. **`PI_NOP_SEARCH_ENGINE`**: an unknown value names itself and the engines. An empty value
    counts as unset.
 
-Review loop: 8 rounds so far. Round 8 fixes are committed.
+Review loop: 9 rounds so far. Round 9 fixes are committed.
 
 ## Next steps
 
@@ -43,10 +43,12 @@ Review loop: 8 rounds so far. Round 8 fixes are committed.
   read-only file, a fence line with a made-up language, closing markup on
   `**ANSWER: x**`, a fence-only answer, an empty key name, tests run as root, the panel hint on
   an unreadable file, a row reset while the same key changed outside, reordered keys, the
-  tool-call hint outside the tui.
+  tool-call hint outside the tui, a dressed `- EVIDENCE:` inside the answer (settled rule), a
+  reply written all as a blockquote.
 
 ## Not started (from the annoyance scan, older than this work)
 
+- `COVERED: no` with `EVIDENCE: none` fails as invented evidence (on master too).
 - The broken-config warning shows on every tool call, not once.
 - `"thinkingLevel": "inherit"` and `"concurrency": "unlimited"`, as the panel prints them, break the file.
 - `/plan` drops the reason for "no steps that pass the checks".

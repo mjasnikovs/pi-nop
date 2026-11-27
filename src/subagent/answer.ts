@@ -61,8 +61,10 @@ const labelled = (line: string | undefined, label: string, flags = 'i'): string 
     return found === null ? undefined : line.slice(found[0].length).trim()
 }
 
-// A bare fence line, with or without its language, wraps content and is none.
-const isContent = (line: string): boolean => line !== '' && !/^(?:`{3,}|~{3,})[\w+-]*$/.test(line)
+// A fence line, with any tag such as c# or ts title="a", wraps content and is none. A line that
+// closes its own fence is inline code, a quote to check.
+const isContent = (line: string): boolean =>
+    line !== '' && !/^(?:`{3,}[^`]*|~{3,}[^~]*)$/.test(line)
 
 // Labels are found on trimmed lines, but the answer keeps its raw lines: blank lines and
 // indentation are part of a copied code block.
