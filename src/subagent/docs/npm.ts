@@ -102,7 +102,6 @@ const viewed = Type.Object({
     'dist-tags.latest': Type.Optional(Type.String())
 })
 const viewedShape = Type.Union([viewed, Type.Array(viewed)])
-// --json, so a silent npm still prints its error code.
 const packed = Type.Array(Type.Object({filename: Type.String()}))
 
 // `name` and `version` always exist, so the answer is an object, or an array of them for a range.
@@ -179,6 +178,7 @@ const unpack = async (
         target,
         [
             'pack',
+            // A silent npm prints its error code only with --json.
             '--json',
             '--ignore-scripts',
             '--pack-destination',

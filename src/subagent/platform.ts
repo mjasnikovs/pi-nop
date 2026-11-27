@@ -18,6 +18,15 @@ const missing = (command: string, error: unknown, cwd?: string): unknown =>
 const isNotFound = (error: unknown): boolean =>
     error instanceof Error && 'code' in error && error.code === 'ENOENT'
 
+// An offline share or a folder the user may not list throws; Windows skips it, so this does too.
+const isFile = (path: string): boolean => {
+    try {
+        return statSync(path, {throwIfNoEntry: false})?.isFile() === true
+    } catch {
+        return false
+    }
+}
+
 // On Windows which, libuv and cmd.exe search the current folder first, so a repo's own copy would run.
 const onPath = (name: string, runnable = process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD'): string => {
     if (process.platform !== 'win32' || isAbsolute(name)) return name
@@ -31,7 +40,7 @@ const onPath = (name: string, runnable = process.env.PATHEXT ?? '.COM;.EXE;.BAT;
     const extensions = runnable.split(delimiter).filter(extension => extension !== '')
     const found = dirs
         .flatMap(dir => extensions.map(extension => join(dir, name + extension)))
-        .find(file => statSync(file, {throwIfNoEntry: false})?.isFile() === true)
+        .find(isFile)
 
     if (found === undefined) throw Object.assign(new Error(notFound(name)), {code: 'ENOENT'})
     return found
